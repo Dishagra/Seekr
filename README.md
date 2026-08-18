@@ -2,6 +2,10 @@
 
 *Resource intelligence platform — worldwide people discovery*
 
+**New here? Read [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md)** — what Seekr is,
+how it works, and what it can and cannot do, in plain language. This file is
+the operator reference.
+
 A data layer that discovers, collects, normalizes, and maintains **evidence-backed
 profiles of publicly discoverable people** — specialized experts and strong
 generalists — and exposes them through a clean read API.
