@@ -1,0 +1,8 @@
+.venv
+/rip.db
+/rip.db.bak-overmerge
+tests
+docs
+__pycache__
+*.pyc
+.pytest_cache

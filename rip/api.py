@@ -1,0 +1,954 @@
+"""Read API for the downstream ranking tool.
+
+Deliberately ranking-free: filtering and lookup only. Stable person UUIDs,
+full provenance, and a /changes feed for incremental sync.
+"""
+
+from datetime import datetime
+
+from fastapi import Depends, FastAPI, HTTPException, Query
+from sqlalchemy import String as SAString
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from .db import SessionLocal, init_db
+from .models import (
+    Affiliation,
+    Authorship,
+    ChangeLog,
+    Contribution,
+    Evidence,
+    IdentityLink,
+    IngestionRun,
+    Organization,
+    Person,
+    Project,
+    Publication,
+    SourceRecord,
+)
+
+app = FastAPI(
+    title="Seekr",
+    description="Evidence-backed resource data layer. No ranking - that is downstream.",
+    version="0.1.0",
+)
+
+
+@app.middleware("http")
+async def bearer_auth(request, call_next):
+    """If RIP_API_TOKEN is set, every /v1 route requires it as a Bearer token."""
+    import os
+
+    from starlette.responses import JSONResponse
+
+    token = os.environ.get("RIP_API_TOKEN")
+    if token and request.url.path.startswith("/v1"):
+        supplied = request.headers.get("authorization", "")
+        if supplied != f"Bearer {token}":
+            return JSONResponse({"detail": "invalid or missing bearer token"}, status_code=401)
+    return await call_next(request)
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    try:
+        init_db()
+    except Exception:
+        # read-only deployments serve a pre-built snapshot; if the DB is
+        # missing/immutable, let routes fail individually instead of
+        # killing the whole app at startup
+        import logging
+
+        logging.getLogger("rip").exception("init_db failed at startup")
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _person_summary(p: Person) -> dict:
+    return {
+        "id": p.id,
+        "merged_into": p.merged_into,
+        "canonical_name": p.canonical_name,
+        "aliases": p.aliases,
+        "location": p.location,
+        "summary": p.summary,
+        "current_role": p.current_role,
+        "current_organization": p.current_organization,
+        "profile_urls": p.profile_urls,
+        "created_at": p.created_at,
+        "updated_at": p.updated_at,
+    }
+
+
+def _evidence_dict(e: Evidence) -> dict:
+    return {
+        "id": e.id,
+        "attribute_type": e.attribute_type,
+        "value": e.value,
+        "extracted_info": e.extracted_info,
+        "source": e.source,
+        "url": e.url,
+        "source_record_id": e.source_record_id,
+        "observed_at": e.observed_at,
+        "published_at": e.published_at,
+        "confidence": e.confidence,
+        "verification_state": e.verification_state,
+    }
+
+
+@app.get("/ui")
+def ui():
+    """Internal exploration UI (token entered in-page)."""
+    from starlette.responses import HTMLResponse
+
+    from .ui import UI_HTML
+
+    return HTMLResponse(UI_HTML)
+
+
+@app.get("/")
+def root():
+    return {
+        "service": "Seekr",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "ui": "/ui",
+        "endpoints_prefix": "/v1",
+        "auth": "Authorization: Bearer <token> required on /v1 routes",
+    }
+
+
+@app.get("/v1/persons")
+def list_persons(
+    q: str | None = Query(None, description="name / alias substring"),
+    skill: str | None = Query(None, description="skill, interest or specialization (substring)"),
+    organization: str | None = Query(None, description="any affiliation, current or past (substring)"),
+    current_organization: str | None = Query(None, description="present employer only"),
+    education: str | None = Query(None, description="where they studied (substring)"),
+    role: str | None = Query(None, description="job title (substring)"),
+    country: str | None = Query(None, description="ISO-3166 alpha-2, e.g. IN, US, DE"),
+    location: str | None = Query(None, description="free-text place (substring)"),
+    source: str | None = Query(None, description="has a record from this source"),
+    technology: str | None = Query(None, description="technology used in a project"),
+    min_publications: int | None = Query(None, ge=0),
+    min_citations: int | None = Query(None, ge=0),
+    min_sources: int | None = Query(None, ge=1, description="corroborated across N sources"),
+    active_since: str | None = Query(None, description="published or pushed since YYYY or YYYY-MM-DD"),
+    updated_since: datetime | None = Query(None, description="record changed since this time"),
+    has_cv: bool | None = Query(None, description="has a published CV/résumé link"),
+    has_email: bool | None = Query(None, description="has a public email"),
+    sort: str = Query("relevance", description="relevance (insertion order) | recent | name"),
+    limit: int = Query(50, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """Faceted people search.
+
+    Every parameter is a *filter*, never a score: `sort` only reorders by a
+    factual field (recency, name) and never by fitness for a role. Ranking
+    stays in the downstream tool.
+    """
+    from sqlalchemy import and_, exists as sa_exists
+
+    stmt = select(Person).where(Person.merged_into.is_(None))
+
+    if q:
+        pattern = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(Person.canonical_name).like(pattern)
+            | func.lower(func.cast(Person.aliases, SAString)).like(pattern)
+        )
+    if skill:
+        stmt = stmt.where(sa_exists().where(and_(
+            Evidence.person_id == Person.id,
+            Evidence.attribute_type.in_(["skill", "research_interest", "specialization"]),
+            func.lower(Evidence.value).like(f"%{skill.lower()}%"),
+        )))
+    for value, relation in ((organization, None), (education, "studied_at")):
+        if not value:
+            continue
+        conds = [
+            Affiliation.person_id == Person.id,
+            Organization.id == Affiliation.organization_id,
+            func.lower(Organization.name).like(f"%{value.lower()}%"),
+        ]
+        if relation:
+            conds.append(Affiliation.relation == relation)
+        stmt = stmt.where(sa_exists().where(and_(*conds)))
+    if current_organization:
+        stmt = stmt.where(
+            func.lower(Person.current_organization).like(f"%{current_organization.lower()}%")
+        )
+    if role:
+        pattern = f"%{role.lower()}%"
+        stmt = stmt.where(
+            func.lower(Person.current_role).like(pattern)
+            | sa_exists().where(and_(
+                Affiliation.person_id == Person.id,
+                func.lower(Affiliation.role).like(pattern),
+            ))
+        )
+    if country:
+        stmt = stmt.where(func.upper(Person.country) == country.upper())
+    if location:
+        stmt = stmt.where(func.lower(Person.location).like(f"%{location.lower()}%"))
+    if source:
+        stmt = stmt.where(sa_exists().where(and_(
+            IdentityLink.person_id == Person.id,
+            SourceRecord.id == IdentityLink.source_record_id,
+            SourceRecord.source == source.lower(),
+        )))
+    if technology:
+        stmt = stmt.where(sa_exists().where(and_(
+            Contribution.person_id == Person.id,
+            Project.id == Contribution.project_id,
+            func.lower(func.cast(Project.technologies, SAString)).like(f"%{technology.lower()}%"),
+        )))
+    if has_cv is not None:
+        cv = sa_exists().where(and_(
+            Evidence.person_id == Person.id, Evidence.attribute_type == "cv_url"
+        ))
+        stmt = stmt.where(cv if has_cv else ~cv)
+    if has_email is not None:
+        mail = sa_exists().where(and_(
+            PersonKey.person_id == Person.id, PersonKey.key_type == "email"
+        ))
+        stmt = stmt.where(mail if has_email else ~mail)
+    if updated_since:
+        stmt = stmt.where(Person.updated_at >= updated_since)
+    if active_since:
+        stmt = stmt.where(sa_exists().where(and_(
+            Authorship.person_id == Person.id,
+            Publication.id == Authorship.publication_id,
+            Publication.published_date >= active_since,
+        )))
+    if min_publications:
+        stmt = stmt.where(
+            select(func.count(Authorship.id))
+            .where(Authorship.person_id == Person.id)
+            .scalar_subquery() >= min_publications
+        )
+    if min_citations:
+        stmt = stmt.where(
+            select(func.coalesce(func.sum(Publication.citations), 0))
+            .select_from(Authorship)
+            .join(Publication, Publication.id == Authorship.publication_id)
+            .where(Authorship.person_id == Person.id)
+            .scalar_subquery() >= min_citations
+        )
+    if min_sources:
+        stmt = stmt.where(
+            select(func.count(IdentityLink.id))
+            .where(IdentityLink.person_id == Person.id)
+            .scalar_subquery() >= min_sources
+        )
+
+    total = db.execute(
+        select(func.count()).select_from(
+            stmt.with_only_columns(Person.id).distinct().subquery()
+        )
+    ).scalar_one()
+
+    order = {
+        "recent": Person.updated_at.desc(),
+        "name": Person.canonical_name.asc(),
+    }.get(sort)
+    page = stmt.with_only_columns(Person.id).distinct()
+    if order is not None:
+        page = page.order_by(order)
+    ids = db.execute(page.limit(limit).offset(offset)).scalars().all()
+    rows = {p.id: p for p in db.execute(
+        select(Person).where(Person.id.in_(ids))).scalars()} if ids else {}
+    persons = [rows[i] for i in ids if i in rows]
+
+    return {
+        "count": len(persons),
+        "total_matches": total,
+        "has_more": offset + len(persons) < total,
+        "next_offset": offset + len(persons) if offset + len(persons) < total else None,
+        "results": [_person_summary(p) for p in persons],
+    }
+
+
+@app.get("/v1/facets")
+def facets(
+    field: str = Query(..., description="country | source | organization | skill | role"),
+    limit: int = Query(30, le=200),
+    db: Session = Depends(get_db),
+):
+    """Available filter values and how many people carry each.
+
+    Counts describe the corpus; they are not a ranking of people.
+    """
+    if field == "country":
+        rows = db.execute(
+            select(Person.country, func.count(Person.id))
+            .where(Person.country.isnot(None), Person.merged_into.is_(None))
+            .group_by(Person.country).order_by(func.count(Person.id).desc()).limit(limit)
+        ).all()
+    elif field == "source":
+        rows = db.execute(
+            select(SourceRecord.source, func.count(func.distinct(IdentityLink.person_id)))
+            .join(IdentityLink, IdentityLink.source_record_id == SourceRecord.id)
+            .group_by(SourceRecord.source).order_by(func.count(IdentityLink.id).desc())
+        ).all()
+    elif field == "organization":
+        rows = db.execute(
+            select(Organization.name, func.count(func.distinct(Affiliation.person_id)))
+            .join(Affiliation, Affiliation.organization_id == Organization.id)
+            .group_by(Organization.id)
+            .order_by(func.count(func.distinct(Affiliation.person_id)).desc()).limit(limit)
+        ).all()
+    elif field in ("skill", "role"):
+        types = (["skill", "research_interest", "specialization"] if field == "skill"
+                 else ["role"])
+        rows = db.execute(
+            select(Evidence.value, func.count(func.distinct(Evidence.person_id)))
+            .where(Evidence.attribute_type.in_(types))
+            .group_by(Evidence.value)
+            .order_by(func.count(func.distinct(Evidence.person_id)).desc()).limit(limit)
+        ).all()
+    else:
+        raise HTTPException(422, "field must be country, source, organization, skill or role")
+    return {"field": field, "values": [{"value": v, "people": n} for v, n in rows if v]}
+
+
+@app.get("/v1/persons/{person_id}")
+def get_person(person_id: str, db: Session = Depends(get_db)):
+    person = db.get(Person, person_id)
+    if person is None:
+        raise HTTPException(404, "person not found")
+    if person.merged_into:
+        # tombstone: old IDs stay resolvable and point at the canonical person
+        canonical = db.get(Person, person.merged_into)
+        out = _person_summary(canonical)
+        out["requested_id"] = person_id
+        return out
+    summary = _person_summary(person)
+    # aggregated attribute view: value + how many sources attest it
+    rows = db.execute(
+        select(
+            Evidence.attribute_type,
+            Evidence.value,
+            func.count(Evidence.id),
+            func.max(Evidence.confidence),
+        )
+        .where(Evidence.person_id == person_id)
+        .group_by(Evidence.attribute_type, Evidence.value)
+    ).all()
+    sources_by_claim: dict = {}
+    for e in db.execute(select(Evidence).where(Evidence.person_id == person_id)).scalars():
+        sources_by_claim.setdefault((e.attribute_type, e.value), set()).add(e.source)
+    summary["attributes"] = [
+        {
+            "attribute_type": at,
+            "value": val,
+            "evidence_count": n,
+            "max_confidence": conf,
+            "sources": sorted(sources_by_claim.get((at, val), [])),
+        }
+        for at, val, n, conf in rows
+    ]
+    return summary
+
+
+@app.get("/v1/persons/{person_id}/evidence")
+def get_evidence(
+    person_id: str,
+    attribute_type: str | None = None,
+    db: Session = Depends(get_db),
+):
+    stmt = select(Evidence).where(Evidence.person_id == person_id)
+    if attribute_type:
+        stmt = stmt.where(Evidence.attribute_type == attribute_type)
+    rows = db.execute(stmt).scalars().all()
+    return {"person_id": person_id, "evidence": [_evidence_dict(e) for e in rows]}
+
+
+@app.get("/v1/persons/{person_id}/publications")
+def get_publications(person_id: str, db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Publication, Authorship.author_position)
+        .join(Authorship, Authorship.publication_id == Publication.id)
+        .where(Authorship.person_id == person_id)
+    ).all()
+    return {
+        "person_id": person_id,
+        "publications": [
+            {
+                "id": pub.id,
+                "title": pub.title,
+                "venue": pub.venue,
+                "published_date": pub.published_date,
+                "url": pub.url,
+                "doi": pub.doi,
+                "citations": pub.citations,
+                "topics": pub.topics,
+                "authors": pub.raw_authors,
+                "author_position": pos,
+            }
+            for pub, pos in rows
+        ],
+    }
+
+
+@app.get("/v1/persons/{person_id}/projects")
+def get_projects(person_id: str, db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Project, Contribution.role)
+        .join(Contribution, Contribution.project_id == Project.id)
+        .where(Contribution.person_id == person_id)
+    ).all()
+    return {
+        "person_id": person_id,
+        "projects": [
+            {
+                "id": proj.id,
+                "name": proj.name,
+                "description": proj.description,
+                "url": proj.url,
+                "technologies": proj.technologies,
+                "organization": proj.organization,
+                "activity": proj.activity,
+                "started_at": proj.started_at,
+                "last_active_at": proj.last_active_at,
+                "role": role,
+            }
+            for proj, role in rows
+        ],
+    }
+
+
+@app.get("/v1/persons/{person_id}/organizations")
+def get_organizations(person_id: str, db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Affiliation, Organization)
+        .join(Organization, Organization.id == Affiliation.organization_id)
+        .where(Affiliation.person_id == person_id)
+    ).all()
+    return {
+        "person_id": person_id,
+        "affiliations": [
+            {
+                "organization": org.name,
+                "org_type": org.org_type,
+                "website": org.website,
+                "relation": aff.relation,
+                "role": aff.role,
+                "start_date": aff.start_date,
+                "end_date": aff.end_date,
+                "is_current": aff.is_current,
+                "url": aff.url,
+            }
+            for aff, org in rows
+        ],
+    }
+
+
+@app.get("/v1/persons/{person_id}/documents")
+def get_documents(person_id: str, db: Session = Depends(get_db)):
+    """CVs/resumes and profile pages this person publishes.
+
+    Every link was found on a page or API record we fetched — Seekr never
+    constructs, guesses or hosts a document. `found_on` is the page the link
+    was taken from, so any link can be traced back to its source.
+    """
+    person = db.get(Person, person_id)
+    if person is None:
+        raise HTTPException(404, "person not found")
+
+    cvs = db.execute(
+        select(Evidence).where(
+            Evidence.person_id == person_id, Evidence.attribute_type == "cv_url"
+        )
+    ).scalars().all()
+
+    def kind(u: str) -> str:
+        host = (u.split("//")[-1].split("/")[0] or "").lower().removeprefix("www.")
+        for domain, label in (
+            ("github.com", "code"), ("orcid.org", "researcher id"),
+            ("dblp.org", "bibliography"), ("openalex.org", "scholarly profile"),
+            ("semanticscholar.org", "scholarly profile"),
+            ("scholar.google.com", "scholarly profile"),
+            ("huggingface.co", "models"), ("stackoverflow.com", "q&a"),
+            ("wikidata.org", "knowledge base"), ("wikipedia.org", "encyclopedia"),
+            ("linkedin.com", "professional profile"),
+        ):
+            if host == domain or host.endswith("." + domain):
+                return label
+        return "web page"
+
+    return {
+        "person_id": person_id,
+        "note": "links are published by the person or their institution; none are generated by Seekr",
+        "cvs": [
+            {
+                "url": e.value,
+                "found_on": e.url,
+                "evidence": e.extracted_info,
+                "source": e.source,
+                "confidence": e.confidence,
+                "observed_at": e.observed_at,
+            }
+            for e in cvs
+        ],
+        "profiles": [
+            {"url": u, "kind": kind(u)} for u in (person.profile_urls or [])
+        ],
+    }
+
+
+@app.get("/v1/persons/{person_id}/graph")
+def get_graph(
+    person_id: str,
+    depth: int = Query(1, ge=1, le=1, description="hops from the person (1 supported)"),
+    limit_coauthors: int = Query(20, le=100),
+    db: Session = Depends(get_db),
+):
+    """Neighborhood of one person: organizations and co-authors.
+
+    Co-authors are capped by shared-publication count purely to bound the
+    payload; the count is a factual edge weight, not a ranking of people.
+    """
+    person = db.get(Person, person_id)
+    if person is None:
+        raise HTTPException(404, "person not found")
+
+    nodes = [{"id": person.id, "type": "person", "label": person.canonical_name}]
+    edges = []
+
+    org_rows = db.execute(
+        select(Organization, Affiliation)
+        .join(Affiliation, Affiliation.organization_id == Organization.id)
+        .where(Affiliation.person_id == person_id)
+    ).all()
+    for org, aff in org_rows:
+        node_id = f"org-{org.id}"
+        if not any(n["id"] == node_id for n in nodes):
+            nodes.append({"id": node_id, "type": "organization", "label": org.name})
+        edges.append({
+            "from": person.id, "to": node_id, "type": aff.relation,
+            "role": aff.role, "is_current": aff.is_current,
+        })
+
+    my_pub_ids = [
+        pid for (pid,) in db.execute(
+            select(Authorship.publication_id).where(Authorship.person_id == person_id)
+        ).all()
+    ]
+    if my_pub_ids:
+        coauthor_rows = db.execute(
+            select(
+                Person.id, Person.canonical_name,
+                func.count(Authorship.publication_id).label("shared"),
+                func.min(Authorship.publication_id),
+            )
+            .join(Authorship, Authorship.person_id == Person.id)
+            .where(
+                Authorship.publication_id.in_(my_pub_ids),
+                Authorship.person_id != person_id,
+                Person.merged_into.is_(None),
+            )
+            .group_by(Person.id)
+            .order_by(func.count(Authorship.publication_id).desc())
+            .limit(limit_coauthors)
+        ).all()
+        for other_id, other_name, shared, via_pub in coauthor_rows:
+            nodes.append({"id": other_id, "type": "person", "label": other_name})
+            edges.append({
+                "from": person.id, "to": other_id, "type": "coauthor",
+                "shared_publications": shared, "via_publication_id": via_pub,
+            })
+
+    return {"person_id": person_id, "depth": depth, "nodes": nodes, "edges": edges}
+
+
+@app.get("/v1/persons/{person_id}/conflicts")
+def get_conflicts(person_id: str, db: Session = Depends(get_db)):
+    """Attribute disagreements between sources, both sides with provenance."""
+    from .models import AttributeConflict
+
+    rows = db.execute(
+        select(AttributeConflict).where(AttributeConflict.person_id == person_id)
+    ).scalars().all()
+    return {
+        "person_id": person_id,
+        "conflicts": [
+            {
+                "id": c.id,
+                "attribute": c.attribute_name,
+                "side_a": {"value": c.value_a, "source": c.source_a,
+                           "source_record_id": c.source_record_a_id},
+                "side_b": {"value": c.value_b, "source": c.source_b,
+                           "source_record_id": c.source_record_b_id},
+                "status": c.status,
+                "created_at": c.created_at,
+            }
+            for c in rows
+        ],
+    }
+
+
+@app.get("/v1/persons/{person_id}/provenance")
+def get_provenance(person_id: str, db: Session = Depends(get_db)):
+    """Answers: where did we get this person's data?"""
+    rows = db.execute(
+        select(IdentityLink, SourceRecord)
+        .join(SourceRecord, SourceRecord.id == IdentityLink.source_record_id)
+        .where(IdentityLink.person_id == person_id)
+    ).all()
+    return {
+        "person_id": person_id,
+        "sources": [
+            {
+                "source": rec.source,
+                "source_type": rec.source_type,
+                "external_id": rec.external_id,
+                "url": rec.url,
+                "first_observed": rec.first_observed,
+                "last_observed": rec.last_observed,
+                "extracted_at": rec.extracted_at,
+                "match_method": link.match_method,
+                "match_confidence": link.match_confidence,
+                "match_signals": link.signals,
+                "review_state": link.review_state,
+            }
+            for link, rec in rows
+        ],
+    }
+
+
+@app.get("/v1/changes")
+def get_changes(
+    since_id: int = Query(0, description="integer cursor: changes with id > this (preferred)"),
+    since: datetime | None = Query(None, description="legacy ISO-timestamp cursor"),
+    limit: int = Query(500, le=5000),
+    db: Session = Depends(get_db),
+):
+    """Incremental sync feed. Poll with next_cursor; the integer cursor is
+    monotonic and has no clock-skew/tie issues (prefer it over `since`)."""
+    stmt = select(ChangeLog).order_by(ChangeLog.id)
+    if since_id:
+        stmt = stmt.where(ChangeLog.id > since_id)
+    elif since:
+        stmt = stmt.where(ChangeLog.changed_at > since)
+    # over-fetch one row to compute has_more without a count query
+    rows = db.execute(stmt.limit(limit + 1)).scalars().all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "changes": [
+            {
+                "id": c.id,
+                "person_id": c.person_id,
+                "field": c.field,
+                "old_value": c.old_value,
+                "new_value": c.new_value,
+                "changed_at": c.changed_at,
+                "source_record_id": c.source_record_id,
+            }
+            for c in rows
+        ],
+        "next_cursor": rows[-1].id if rows else since_id,
+        "has_more": has_more,
+        "next_since": rows[-1].changed_at if rows else since,  # legacy
+    }
+
+
+@app.get("/v1/review/merges")
+def review_merges(db: Session = Depends(get_db)):
+    """Suspicious resolution decisions awaiting human review."""
+    from .review import list_suspicious
+
+    return list_suspicious(db)
+
+
+@app.post("/v1/review/merges/{link_id}/approve")
+def review_approve(link_id: int, db: Session = Depends(get_db)):
+    from .review import approve_link
+
+    try:
+        link = approve_link(db, link_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return {"link_id": link.id, "review_state": link.review_state}
+
+
+@app.post("/v1/review/merges/{link_id}/split")
+def review_split(link_id: int, db: Session = Depends(get_db)):
+    from .review import split_link
+
+    try:
+        person = split_link(db, link_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return {"new_person_id": person.id, "canonical_name": person.canonical_name}
+
+
+@app.post("/v1/review/duplicates/{candidate_id}/merge")
+def review_duplicate_merge(candidate_id: int, db: Session = Depends(get_db)):
+    from .review import resolve_duplicate
+
+    try:
+        return resolve_duplicate(db, candidate_id, "merge")
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.post("/v1/review/duplicates/{candidate_id}/reject")
+def review_duplicate_reject(candidate_id: int, db: Session = Depends(get_db)):
+    from .review import resolve_duplicate
+
+    try:
+        return resolve_duplicate(db, candidate_id, "reject")
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.get("/v1/query")
+def nl_query(
+    q: str = Query(..., min_length=2, description="natural-language query"),
+    limit: int = Query(0, le=500, description="override the page size (0 = query default)"),
+    offset: int = Query(0, ge=0, description="skip this many matches (paging)"),
+    discover: str = Query(
+        "false",
+        description="false (default) = local corpus only; true = also return "
+        "live source suggestions; queue = also add them to the discovery-lead "
+        "queue for a worker. Never ingests inside this request.",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Natural-language search. Read-only, no ranking — DB order.
+
+    The response is explicit about which terms became filters and which
+    could not be applied; never assume an unlisted constraint was enforced.
+    With `discover=true`, a query the corpus cannot answer additionally
+    returns `discovery_suggestions` — candidates from live searches across
+    OpenAlex, Semantic Scholar and dblp that an operator may choose to
+    ingest. `discover=queue` also adds them to the discovery-lead queue so a
+    worker ingests them later. Neither mode ingests during the request.
+    Suggestions are not results and are not ranked.
+    """
+    from .nlq import count_matches, execute, has_filters, parse
+
+    # tolerate direct calls (tests) where FastAPI has not resolved the params
+    limit = limit if isinstance(limit, int) else 0
+    offset = offset if isinstance(offset, int) else 0
+    parsed = parse(db, q)
+    if limit:
+        parsed.limit = limit
+    parsed.offset = offset
+    persons = execute(db, parsed)
+    matched_nothing = not has_filters(parsed)
+    total = count_matches(db, parsed)
+    # attach a small evidence-count attribute sample per result for display
+    ids = [p.id for p in persons]
+    attr_map: dict = {pid: {} for pid in ids}
+    org_map: dict = {pid: [] for pid in ids}
+    if ids:
+        rows = db.execute(
+            select(Evidence.person_id, Evidence.attribute_type, Evidence.value,
+                   Evidence.source)
+            .where(Evidence.person_id.in_(ids),
+                   Evidence.attribute_type.in_(["skill", "research_interest"]))
+        ).all()
+        for pid, at, val, src in rows:
+            entry = attr_map[pid].setdefault(
+                (at, val),
+                {"attribute_type": at, "value": val, "evidence_count": 0, "sources": set()},
+            )
+            entry["evidence_count"] += 1
+            if src:
+                entry["sources"].add(src)
+        # every affiliation, so a caller can see WHICH one matched an org filter
+        for pid, org_name in db.execute(
+            select(Affiliation.person_id, Organization.name)
+            .join(Organization, Organization.id == Affiliation.organization_id)
+            .where(Affiliation.person_id.in_(ids))
+        ).all():
+            if org_name not in org_map[pid]:
+                org_map[pid].append(org_name)
+
+    wanted_orgs = {o.lower() for o in parsed.organizations}
+    results = []
+    for p in persons:
+        summary = _person_summary(p)
+        attrs = [
+            {**a, "sources": sorted(a["sources"])}
+            for a in attr_map.get(p.id, {}).values()
+        ]
+        summary["attributes"] = sorted(attrs, key=lambda a: -a["evidence_count"])[:6]
+        summary["organizations"] = org_map.get(p.id, [])
+        # the affiliation that satisfied the org filter — often NOT the current
+        # one, so showing only current_organization looks like a wrong match
+        summary["matched_organization"] = next(
+            (o for o in summary["organizations"] if o.lower() in wanted_orgs), None
+        )
+        results.append(summary)
+    response = {
+        "query": q,
+        "applied_filters": {
+            "skills": parsed.skills,
+            "skill_patterns": parsed.skill_patterns,
+            "organizations": parsed.organizations,
+            "locations": parsed.locations,
+            "name_terms": parsed.name_terms,
+            "limit": parsed.limit,
+            "offset": parsed.offset,
+        },
+        "unmatched_terms": parsed.unmatched_terms,
+        # count = this page; total_matches = everything the filters match
+        "count": len(persons),
+        "total_matches": total,
+        "has_more": parsed.offset + len(persons) < total,
+        "next_offset": parsed.offset + len(persons) if parsed.offset + len(persons) < total else None,
+        "results": results,
+        # nothing in the query matched the corpus vocabulary, so no filter was
+        # applied; returning rows here would be arbitrary, not an answer
+        "matched_nothing": matched_nothing,
+        "explanation": (
+            "None of these terms exist in the corpus, so no filter could be "
+            "applied and no results are returned. Try discover=true to search "
+            "live sources."
+            if matched_nothing
+            else None
+        ),
+        "discover_available": bool(
+            not persons or len(parsed.unmatched_terms) >= 2
+        ),
+    }
+    mode = str(discover).lower()
+    if mode in ("true", "queue", "1") and response["discover_available"]:
+        from .nlq import discovery_suggestions, queue_suggestions
+
+        suggestions = discovery_suggestions(parsed)
+        response["discovery_suggestions"] = suggestions
+        if mode == "queue":
+            response["queued_leads"] = queue_suggestions(db, suggestions, q)
+    return response
+
+
+@app.post("/v1/webhooks")
+def create_webhook(payload: dict, db: Session = Depends(get_db)):
+    """Subscribe to change events. The signing secret is returned ONCE."""
+    from .webhooks import create_subscription
+
+    url = (payload or {}).get("url")
+    if not url:
+        raise HTTPException(422, "url is required")
+    try:
+        sub, secret = create_subscription(
+            db, url, payload.get("event_types"), payload.get("description")
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {
+        "id": sub.id,
+        "url": sub.url,
+        "event_types": sub.event_types,
+        "signing_secret": secret,
+        "note": "store this secret now; it is not shown again",
+    }
+
+
+@app.get("/v1/webhooks")
+def list_webhooks(db: Session = Depends(get_db)):
+    from .models import WebhookSubscription
+
+    subs = db.execute(
+        select(WebhookSubscription).where(WebhookSubscription.is_active.is_(True))
+    ).scalars().all()
+    return {
+        "subscriptions": [
+            {"id": s.id, "url": s.url, "event_types": s.event_types,
+             "description": s.description, "created_at": s.created_at}
+            for s in subs
+        ]
+    }
+
+
+@app.get("/v1/webhooks/health")
+def webhook_health(db: Session = Depends(get_db)):
+    """Delivery backlog. A rising `pending` count means the delivery cron
+    (`rip.cli deliver-webhooks`) is not running."""
+    from .webhooks import health
+
+    return health(db)
+
+
+@app.delete("/v1/webhooks/{subscription_id}")
+def delete_webhook(subscription_id: int, db: Session = Depends(get_db)):
+    from .models import WebhookSubscription
+
+    sub = db.get(WebhookSubscription, subscription_id)
+    if sub is None:
+        raise HTTPException(404, "subscription not found")
+    sub.is_active = False
+    db.commit()
+    return {"id": sub.id, "status": "deactivated"}
+
+
+@app.post("/v1/leads")
+def queue_lead(payload: dict, db: Session = Depends(get_db)):
+    """Queue one source record for a worker to ingest later.
+
+    Used by the UI's live-search results. Ingestion still happens in the
+    worker, under the normal rate limits — never inside this request.
+    """
+    from .models import DiscoveryLead
+
+    source = (payload or {}).get("source")
+    external_id = (payload or {}).get("external_id")
+    if not source or not external_id:
+        raise HTTPException(422, "source and external_id are required")
+    from .connectors import CONNECTORS
+
+    if source not in CONNECTORS:
+        raise HTTPException(422, f"unknown source '{source}'")
+
+    already = db.execute(
+        select(SourceRecord.id).where(
+            SourceRecord.source == source, SourceRecord.external_id == external_id
+        )
+    ).first()
+    if already:
+        return {"status": "already_ingested", "source": source, "external_id": external_id}
+    existing = db.execute(
+        select(DiscoveryLead).where(
+            DiscoveryLead.source == source, DiscoveryLead.identifier == external_id
+        )
+    ).scalar_one_or_none()
+    if existing:
+        return {"status": "already_queued", "lead_id": existing.id}
+    lead = DiscoveryLead(
+        source=source,
+        identifier=external_id,
+        reason=(payload.get("reason") or "queued from live search")[:1000],
+    )
+    db.add(lead)
+    db.commit()
+    return {"status": "queued", "lead_id": lead.id}
+
+
+@app.get("/v1/health/sources")
+def source_health(db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(
+            IngestionRun.source,
+            IngestionRun.status,
+            func.count(IngestionRun.id),
+            func.max(IngestionRun.finished_at),
+        ).group_by(IngestionRun.source, IngestionRun.status)
+    ).all()
+    return {
+        "sources": [
+            {"source": s, "status": st, "runs": n, "last_finished_at": last}
+            for s, st, n, last in rows
+        ]
+    }

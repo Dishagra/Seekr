@@ -1,0 +1,30 @@
+# Databases — these hold personal data about real people. Never commit them.
+*.db
+*.db-wal
+*.db-shm
+*.db.bak*
+data/
+!data/.gitkeep
+
+# Harvest / ingest artefacts
+*.jsonl
+*.jsonl.gz
+*.failures.jsonl
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Tooling
+.vercel
+.DS_Store
