@@ -597,6 +597,12 @@ function renderResults(data, opts={}){
   const total = data.total_matches ?? PAGE.rows.length;
   // A dropped constraint must be loud: results that silently ignore
   // "in Hyderabad" read as wrong answers rather than a coverage gap.
+  // the deployed snapshot cannot be written to, so live finds are not kept
+  const roBanner = (data.storage === "read-only" && data.stored_from_live === 0
+                    && (data.discovery_suggestions||[]).length) ? `
+    <div class="banner warnbar">This deployment reads a fixed snapshot, so people
+      found live are shown but not saved. Point <code>RIP_DATABASE_URL</code> at a
+      writable database to let the graph grow here.</div>` : "";
   const unmatchedBanner = um.length ? `
     <div class="banner warnbar">
       <b>${um.map(esc).join(", ")}</b> ${um.length===1?"was":"were"} not applied —
@@ -642,7 +648,7 @@ function renderResults(data, opts={}){
       <div class="count">${PAGE.rows.length?`<b>${fmt(PAGE.rows.length)}</b> of ${fmt(total)} matching`:""}</div>
       <div class="pills">${pills}${unmatched}</div>
     </div>
-    ${unmatchedBanner}${main}${suggBlock}`;
+    ${roBanner}${unmatchedBanner}${main}${suggBlock}`;
 }
 function emptyState(title, body, action){
   return `<div class="card"><div class="empty">

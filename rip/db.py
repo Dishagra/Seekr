@@ -24,10 +24,14 @@ _pool_kwargs = (
 engine = create_engine(DB_URL, connect_args=_connect_args, **_pool_kwargs)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
+# True when the graph cannot be written to — the deployed snapshot is opened
+# read-only, so a live search there can find people but never keep them.
+READ_ONLY = "mode=ro" in DB_URL
+
 if DB_URL.startswith("sqlite"):
     from sqlalchemy import event
 
-    _READ_ONLY = "mode=ro" in DB_URL
+    _READ_ONLY = READ_ONLY
 
     @event.listens_for(engine, "connect")
     def _sqlite_pragmas(dbapi_connection, _record):

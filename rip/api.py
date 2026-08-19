@@ -11,7 +11,7 @@ from sqlalchemy import String as SAString
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .db import SessionLocal, init_db
+from .db import READ_ONLY, SessionLocal, init_db
 from .models import (
     Affiliation,
     Authorship,
@@ -828,6 +828,10 @@ def nl_query(
         # worth going live whenever the corpus could not answer fully: no
         # results at all, or a constraint we had to drop
         "discover_available": bool(not persons or parsed.unmatched_terms),
+        # on the deployed read-only snapshot a live search still answers the
+        # question, but nothing it finds can be kept — say so rather than
+        # letting the corpus look mysteriously frozen
+        "storage": "read-only" if READ_ONLY else "writable",
     }
     mode = str(discover).lower()
     # "auto" is the default: a question the corpus cannot answer is exactly
