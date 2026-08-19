@@ -852,7 +852,30 @@ def nl_query(
                 parsed.limit = limit
             parsed.offset = offset
             persons = execute(db, parsed)
-            response["results"] = build_results(persons)
+            # People the live provider returned FOR THIS QUERY are answers in
+            # their own right. The corpus filter can only express what the
+            # corpus already knows, so a freshly fetched person often fails it
+            # ("Rust" is nobody's stored topic yet) — appending them keeps the
+            # results the user actually paid a round-trip for.
+            seen = {p.id for p in persons}
+            live_ids = [
+                s_["person_id"] for s_ in suggestions if s_.get("person_id")
+            ]
+            if live_ids:
+                from .models import Person as _Person
+
+                extra = db.execute(
+                    select(_Person).where(
+                        _Person.id.in_(live_ids), _Person.merged_into.is_(None)
+                    )
+                ).scalars().all()
+                persons = persons + [p for p in extra if p.id not in seen]
+            rows = build_results(persons)
+            live_set = set(live_ids)
+            for row in rows:
+                # so a caller can tell a corpus match from a just-fetched one
+                row["from_live_search"] = row["id"] in live_set
+            response["results"] = rows
             response["count"] = len(persons)
             response["total_matches"] = count_matches(db, parsed)
             response["unmatched_terms"] = parsed.unmatched_terms

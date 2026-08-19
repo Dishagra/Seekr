@@ -53,6 +53,39 @@ class OpenAlexConnector(BaseConnector):
             for a in data.get("results", [])
         ]
 
+    def search_authors_by_topic(self, topic: str, limit: int = 10) -> list[dict]:
+        """Authors who published on a topic.
+
+        Author-name search is the wrong instrument for "computer vision
+        researchers" — it returns people surnamed Rust and index entities like
+        "Computer Vision Foundation". Searching works and taking their authors
+        finds people who actually work on the subject.
+        """
+        data = self.get_json(
+            f"{API}/works",
+            params=self._params({"search": topic, "per-page": min(50, limit * 5)}),
+        )
+        seen: dict[str, dict] = {}
+        for work in data.get("results", []):
+            for authorship in work.get("authorships", []):
+                author = authorship.get("author") or {}
+                aid = (author.get("id") or "").rsplit("/", 1)[-1]
+                name = author.get("display_name")
+                if not aid or not name or aid in seen:
+                    continue
+                insts = authorship.get("institutions") or [{}]
+                seen[aid] = {
+                    "id": aid,
+                    "name": name,
+                    "orcid": author.get("orcid"),
+                    "works_count": None,
+                    "cited_by": None,
+                    "affiliation": insts[0].get("display_name"),
+                }
+                if len(seen) >= limit:
+                    return list(seen.values())
+        return list(seen.values())
+
     def fetch(self, identifier: str) -> NormalizedProfile:
         author_id = identifier.rsplit("/", 1)[-1]
         author = self.get_json(f"{API}/authors/{author_id}", params=self._params())

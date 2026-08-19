@@ -58,7 +58,9 @@ def test_execute_applies_all_filters(session):
     # unknown skill applied as nothing -> honest unmatched, no accidental filter
     parsed = parse(session, "quantum basketweaving experts")
     assert parsed.skills == []
-    assert "quantum" in parsed.unmatched_terms or "basketweaving" in parsed.unmatched_terms
+    # reported as the phrase the user typed, not chopped into words
+    dropped = " ".join(parsed.unmatched_terms).lower()
+    assert "quantum" in dropped or "basketweaving" in dropped
 
 
 def test_name_term_filter(session):
@@ -102,6 +104,13 @@ def test_discovery_suggestions_are_not_results(session, monkeypatch):
         def search_authors(self, name, limit=10):
             return [{"id": "A999", "name": "Marie Curie", "works_count": 12,
                      "affiliation": "Sorbonne", "cited_by": 3}]
+
+        def search_authors_by_topic(self, topic, limit=10):
+            return self.search_authors(topic, limit)
+
+        def fetch(self, identifier):
+            # no payload available, so nothing can be stored from this run
+            raise RuntimeError("fetch not stubbed")
 
     monkeypatch.setattr("rip.connectors.get_connector", lambda s: FakeOpenAlex())
     before_persons = session.query(Person).count()
@@ -154,6 +163,14 @@ class _FakeSearcher:
         if self._fail:
             raise RuntimeError(f"{self._name} unavailable")
         return self._results
+
+    def search_authors_by_topic(self, query, limit=10):
+        # topical discovery is tried first; these fixtures answer by name
+        return []
+
+    def fetch(self, identifier):
+        # free sources are fetched and ingested; these fixtures have no payload
+        raise RuntimeError(f"{self._name} fetch not stubbed")
 
 
 def _patch_sources(monkeypatch, openalex=None, s2=None, dblp=None, fail=()):
@@ -508,7 +525,10 @@ def test_paid_results_are_stored_so_the_next_query_is_free(session, monkeypatch)
 
     second = nl_query(q="growth leads at Zeta Corp", discover="true", db=session)
     assert len(calls) == 1          # provider not queried again
-    assert second["stored_from_live"] == 0
+    # either the corpus now answers fully (no live search needed) or the cache
+    # suppressed the call — never a second purchase
+    assert second.get("stored_from_live", 0) == 0
+    assert any(r["canonical_name"] == "Nadia Rahman" for r in second["results"])
     cache = session.query(SearchCache).filter_by(provider="exa").one()
     assert cache.result_count == 1 and cache.stored_count == 1
 

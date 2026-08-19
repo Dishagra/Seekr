@@ -22,14 +22,58 @@ from .models import Evidence, Organization, Person
 
 logger = logging.getLogger("rip.nlq")
 
+# Words that describe what the searcher wants rather than what a person does.
+# Without these, "strong in computer vision" matches the physics topic "Strong
+# Light-Matter Interactions", and "at top conferences" matches "Conferences and
+# Exhibitions Management". They are query grammar, not domain vocabulary.
 STOPWORDS = {
-    "a", "an", "and", "at", "expert", "experts", "engineer", "engineers", "find",
-    "for", "from", "in", "me", "of", "on", "or", "people", "person", "profiles",
-    "researcher", "researchers", "show", "someone", "specialist", "specialists",
-    "the", "to", "who", "with", "working", "works", "developer", "developers",
-    "scientist", "scientists", "top", "first", "list", "give", "get", "best",
+    # articles, prepositions, conjunctions
+    "a", "an", "and", "or", "the", "of", "in", "at", "on", "to", "from", "for",
+    "with", "who", "whom", "whose", "that", "which", "both", "also", "than",
+    "then", "into", "across", "about", "over", "under", "between", "not",
+    "but", "as", "by", "is", "are", "was", "were", "be", "been", "have", "has",
+    "had", "do", "does", "did", "can", "could", "would", "should", "will",
+    # asking for things
+    "find", "show", "list", "give", "get", "need", "want", "looking", "look",
+    "search", "me", "my", "i", "we", "us", "you", "please", "help", "few",
+    "some", "any", "someone", "somebody", "people", "person", "persons",
+    "profiles", "profile", "candidates", "folks", "individuals", "seem",
+    "seems", "actually", "really", "ideally", "preferably", "unusually",
+    "particularly", "especially", "strongest", "strong", "best", "top",
+    "good", "great", "excellent", "solid", "leading", "notable", "prominent",
+    # job words that are titles everywhere and topics nowhere
+    "engineer", "engineers", "developer", "developers", "researcher",
+    "researchers", "scientist", "scientists", "expert", "experts",
+    "specialist", "specialists", "professional", "professionals",
+    "practitioner", "practitioners", "contributor", "contributors",
+    "maintainer", "maintainers", "founder", "founders", "manager", "managers",
+    "designer", "designers", "architect", "architects", "lead", "leads",
+    "senior", "junior", "staff", "principal", "head", "chief",
+    # career/evidence talk
+    "experience", "experienced", "expertise", "background", "worked", "works",
+    "working", "work", "built", "build", "building", "contributed",
+    "contributing", "contributions", "published", "publishing", "publication",
+    "publications", "papers", "paper", "authored", "spoken", "speaking",
+    "joined", "later", "previously", "currently", "current", "former",
+    "years", "year", "public", "publicly", "presence", "evidence", "online",
+    "portfolio", "profile", "show", "showing", "track", "record",
+    "conferences", "conference", "venues", "companies", "company", "startup",
+    "startups", "industry", "academia", "academic", "production", "real",
+    "stuff", "scale", "large", "major", "popular", "significant",
+    "substantial", "deploying", "deployed", "moved", "continue", "know",
+    "knows", "understand", "understands", "spent", "time", "since",
+    # generic product/role nouns: "product designers" must not reach
+    # "Natural product bioactivities", and "tools" matches nothing useful
+    "product", "products", "tools", "tool", "projects", "project", "platform",
+    "platforms", "application", "applications", "apps", "app", "solutions",
+    "services", "service", "technology", "technologies", "tech", "software",
+    "systems" if False else "__unused__",
 }
+STOPWORDS.discard("__unused__")
 SKILL_ATTRS = ("skill", "research_interest", "specialization")
+# A GitHub bio reading "backend engineer, distributed systems" is real evidence
+# of what someone does, even though no source emitted it as a tidy skill value.
+TEXT_ATTRS = SKILL_ATTRS + ("bio", "role")
 # Country names -> ISO codes. Reference data, not a guess about people: it
 # lets "in India" become a real country filter even when no source recorded a
 # city. Extend freely; unknown names simply stay unmatched.
@@ -51,6 +95,21 @@ COUNTRIES = {
     "united arab emirates": "AE", "uae": "AE", "iran": "IR", "taiwan": "TW",
     "hong kong": "HK", "colombia": "CO", "peru": "PE",
 }
+# "Indian researchers" means people in India, not the topic "Indian History".
+DEMONYMS = {
+    "indian": "IN", "american": "US", "british": "GB", "german": "DE",
+    "french": "FR", "canadian": "CA", "chinese": "CN", "japanese": "JP",
+    "australian": "AU", "brazilian": "BR", "spanish": "ES", "italian": "IT",
+    "dutch": "NL", "swiss": "CH", "swedish": "SE", "israeli": "IL",
+    "korean": "KR", "russian": "RU", "polish": "PL", "danish": "DK",
+    "norwegian": "NO", "finnish": "FI", "irish": "IE", "portuguese": "PT",
+    "greek": "GR", "turkish": "TR", "mexican": "MX", "nigerian": "NG",
+    "kenyan": "KE", "pakistani": "PK", "singaporean": "SG",
+}
+# A word occurring in more than this share of vocabulary values is too generic
+# to match on: "systems" appears in 147 topics, "robotics" in 7.
+GENERIC_DF_RATIO = 0.01
+GENERIC_DF_ABSOLUTE = 25
 FUZZY_VOCAB_THRESHOLD = 90.0
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
@@ -67,9 +126,76 @@ class NLQuery:
     # terms that matched many vocabulary values: filtered by pattern rather
     # than by enumerating every match (which does not scale with the corpus)
     skill_patterns: list[str] = field(default_factory=list)
+    # One entry per distinct concept the user asked for. Matches are ORed
+    # WITHIN a group and ANDed ACROSS groups, so "robotics and computer
+    # vision" means both, not either.
+    skill_groups: list[dict] = field(default_factory=list)
     limit: int = DEFAULT_LIMIT
     offset: int = 0
     unmatched_terms: list[str] = field(default_factory=list)
+
+
+def _text_evidence_exists(session: Session, term: str) -> bool:
+    """Does any bio or job title mention this term?"""
+    return session.execute(
+        select(Evidence.id).where(
+            Evidence.attribute_type.in_(("bio", "role")),
+            func.lower(Evidence.value).like(f"%{term}%"),
+        ).limit(1)
+    ).first() is not None
+
+
+# Acronyms carry the whole meaning of a query ("ML engineers at OpenAI") but are
+# too short to survive the name/length guards, so they get dropped and the query
+# silently becomes "engineers at OpenAI". Expand them to what the corpus calls
+# them; if the expansion has no vocabulary match either, the term still drops.
+ACRONYMS = {
+    "ai": "artificial intelligence",
+    "ml": "machine learning",
+    "nlp": "natural language",
+    "cv": "computer vision",
+    "llm": "large language model",
+    "llms": "large language model",
+    "ux": "user experience",
+    "ui": "user interface",
+    "hci": "human-computer interaction",
+    "iot": "internet of things",
+    "ar": "augmented reality",
+    "vr": "virtual reality",
+    "genai": "artificial intelligence",
+    "rl": "reinforcement learning",
+    "k8s": "kubernetes",
+    "js": "javascript",
+    "ts": "typescript",
+    "ds": "data science",
+    "bi": "business intelligence",
+    "nlu": "natural language",
+    "asr": "speech recognition",
+    "cybersec": "cybersecurity",
+    "infosec": "information security",
+    "sre": "site reliability",
+    "qa": "quality assurance",
+}
+
+
+def _token_frequency(skills: dict) -> dict:
+    """How many vocabulary values contain each word — a genericness measure."""
+    from collections import Counter
+
+    df: Counter = Counter()
+    for key in skills:
+        for word in set(re.findall(r"[a-z0-9]+", key)):
+            df[word] += 1
+    return df
+
+
+def _is_generic(term: str, df: dict, vocab_size: int) -> bool:
+    """Would matching this term sweep in unrelated topics?"""
+    words = term.split()
+    if len(words) > 1:
+        return False  # a phrase is specific enough to match on
+    n = df.get(term, 0)
+    return n > max(GENERIC_DF_ABSOLUTE, vocab_size * GENERIC_DF_RATIO)
 
 
 def _vocab(session: Session) -> tuple[dict, dict, dict]:
@@ -114,6 +240,8 @@ def parse(session: Session, query: str) -> NLQuery:
     cleaned = re.sub(r"\b(?:top|first|show|list)\s+\d{1,3}\b", " ", query, flags=re.I)
 
     skills, orgs, locations = _vocab(session)
+    df = _token_frequency(skills)
+    vocab_size = max(1, len(skills))
     tokens = [t for t in re.findall(r"[a-zA-Z0-9+#.'-]+", cleaned)]
     consumed: set[int] = set()
 
@@ -131,7 +259,7 @@ def parse(session: Session, query: str) -> NLQuery:
         if len(parts) > 1 and (parts[0] in STOPWORDS or parts[-1] in STOPWORDS):
             continue
         if gram_l in skills:
-            result.skills.append(skills[gram_l])
+            result.skill_groups.append({"term": gram, "values": [skills[gram_l]]})
             consumed |= span
         elif gram_l in orgs:
             result.organizations.append(orgs[gram_l])
@@ -139,22 +267,57 @@ def parse(session: Session, query: str) -> NLQuery:
         elif gram_l in COUNTRIES:
             result.countries.append(COUNTRIES[gram_l])
             consumed |= span
+        elif gram_l in DEMONYMS:
+            # "Indian researchers" is a place, not the topic "Indian History"
+            result.countries.append(DEMONYMS[gram_l])
+            consumed |= span
         elif gram_l in locations:
             result.locations.append(locations[gram_l])
             consumed |= span
-        elif len(gram_l) >= 5:
-            # word-boundary containment: "machine learning" should match the
-            # corpus value "Machine Learning in Materials Science". A few
-            # matches are enumerated; many become a LIKE pattern, because
-            # enumerating them breaks down as the corpus grows.
+        elif gram_l in ACRONYMS and ACRONYMS[gram_l] in skills:
+            result.skill_groups.append({"term": gram, "values": [skills[ACRONYMS[gram_l]]]})
+            consumed |= span
+        elif gram_l in ACRONYMS:
+            expansion = ACRONYMS[gram_l]
+            pattern = re.compile(rf"\b{re.escape(expansion)}\b")
+            contained = [v for k, v in skills.items() if pattern.search(k)]
+            if contained:
+                result.skill_groups.append({"term": gram, "values": contained})
+                consumed |= span
+        elif len(gram_l) >= 5 and not _is_generic(gram_l, df, vocab_size):
+            # Word-boundary containment: "computer vision" should reach
+            # "Computer Vision and Image Processing". Generic words are
+            # excluded above, or "building" would match building materials.
             pattern = re.compile(rf"\b{re.escape(gram_l)}\b")
             contained = [v for k, v in skills.items() if pattern.search(k)]
-            if 0 < len(contained) <= 8:
-                result.skills.extend(contained)
-                consumed |= span
-            elif contained:
-                result.skill_patterns.append(gram_l)
-                consumed |= span
+            group = {"term": gram}
+            if not contained:
+                # no topic matches, but a bio or job title might say it
+                if _text_evidence_exists(session, gram_l):
+                    result.skill_groups.append(group)
+                    consumed |= span
+                    continue
+                exact = any(
+                    t in skills or t in orgs or t in locations or t in COUNTRIES
+                    for t in parts
+                )
+                if len(parts) > 1 and not exact:
+                    # A phrase the corpus does not know must not be split into
+                    # its words: "computer vision" has no matching topic, and
+                    # the bare word "computer" reaches EEG and Brain-Computer
+                    # Interfaces. Consume the span so the parts cannot match by
+                    # mere containment. Words that are exact vocabulary in their
+                    # own right ("Python" in "Python developers") are spared.
+                    consumed |= span
+                    # still tell the caller the phrase was dropped
+                    result.unmatched_terms.append(gram)
+                continue
+            if len(contained) <= 12:
+                group["values"] = contained
+            else:
+                group["pattern"] = gram_l
+            result.skill_groups.append(group)
+            consumed |= span
 
     # fuzzy pass for near-miss skill terms ("kubernetes" vs "Kubernetes ops")
     for i, token in enumerate(tokens):
@@ -166,7 +329,7 @@ def parse(session: Session, query: str) -> NLQuery:
             default=None,
         )
         if best and fuzz.ratio(token.lower(), best[0]) >= FUZZY_VOCAB_THRESHOLD:
-            result.skills.append(best[1])
+            result.skill_groups.append({"term": token, "values": [best[1]]})
             consumed.add(i)
 
     # Leftovers. A capitalised word is NOT automatically a person's name:
@@ -181,18 +344,48 @@ def parse(session: Session, query: str) -> NLQuery:
         else:
             result.unmatched_terms.append(token)
 
-    result.skills = list(dict.fromkeys(result.skills))
+    # flat views, kept so the API response and existing callers stay simple
+    result.skills = list(dict.fromkeys(
+        v for g in result.skill_groups for v in g.get("values", [])))
+    result.skill_patterns = list(dict.fromkeys(
+        g["pattern"] for g in result.skill_groups if g.get("pattern")))
     result.organizations = list(dict.fromkeys(result.organizations))
     result.locations = list(dict.fromkeys(result.locations))
+    result.countries = list(dict.fromkeys(result.countries))
     return result
 
 
+def _name_clauses(column, token: str):
+    """Word-boundary name match, since SQLite has no regex.
+
+    A substring test makes "AI" match "A. Aijaz" and "Suaide" — 2,027 people
+    in this corpus — so a query about AI silently becomes a query about names.
+    """
+    t = token.lower()
+    return (
+        func.lower(column) == t,
+        func.lower(column).like(f"{t} %"),
+        func.lower(column).like(f"% {t}"),
+        func.lower(column).like(f"% {t} %"),
+        func.lower(column).like(f"{t}, %"),
+        func.lower(column).like(f"% {t}, %"),
+    )
+
+
+def _looks_like_a_name(token: str) -> bool:
+    """Acronyms are technologies, not surnames: AI, ML, UX, API, SQL."""
+    return len(token) >= 4 and not token.isupper()
+
+
 def _name_exists(session: Session, token: str) -> bool:
-    """Does anyone in the corpus have this word in their name?"""
-    pattern = f"%{token.lower()}%"
+    """Does anyone in the corpus actually carry this word as part of a name?"""
+    from sqlalchemy import or_
+
+    if not _looks_like_a_name(token):
+        return False
     return session.execute(
         select(Person.id).where(
-            func.lower(Person.canonical_name).like(pattern),
+            or_(*_name_clauses(Person.canonical_name, token)),
             Person.merged_into.is_(None),
         ).limit(1)
     ).first() is not None
@@ -200,7 +393,7 @@ def _name_exists(session: Session, token: str) -> bool:
 
 def has_filters(parsed: NLQuery) -> bool:
     return bool(
-        parsed.skills or parsed.skill_patterns or parsed.organizations
+        parsed.skill_groups or parsed.organizations
         or parsed.locations or parsed.name_terms or parsed.countries
     )
 
@@ -211,18 +404,36 @@ def _filtered_stmt(parsed: NLQuery):
 
     from sqlalchemy import or_
 
+    from sqlalchemy import and_, exists as sa_exists
+
     stmt = select(Person).where(Person.merged_into.is_(None))
-    if parsed.skills or parsed.skill_patterns:
+    # One EXISTS per concept: a person must satisfy EVERY concept asked for,
+    # while any of that concept's matching topics will do. ORing everything
+    # together instead would turn "robotics and computer vision" into "either".
+    for group in parsed.skill_groups:
         clauses = []
-        if parsed.skills:
-            clauses.append(
-                func.lower(Evidence.value).in_([s.lower() for s in parsed.skills])
-            )
-        for pat in parsed.skill_patterns:
-            clauses.append(func.lower(Evidence.value).like(f"%{pat.lower()}%"))
-        stmt = stmt.join(Evidence, Evidence.person_id == Person.id).where(
-            Evidence.attribute_type.in_(SKILL_ATTRS), or_(*clauses)
-        )
+        if group.get("values"):
+            clauses.append(and_(
+                Evidence.attribute_type.in_(SKILL_ATTRS),
+                func.lower(Evidence.value).in_([v.lower() for v in group["values"]]),
+            ))
+        if group.get("pattern"):
+            clauses.append(and_(
+                Evidence.attribute_type.in_(SKILL_ATTRS),
+                func.lower(Evidence.value).like(f"%{group['pattern'].lower()}%"),
+            ))
+        # the raw term as written, against free text (bio, job title)
+        term = (group.get("term") or "").lower()
+        if len(term) >= 4:
+            clauses.append(and_(
+                Evidence.attribute_type.in_(("bio", "role")),
+                func.lower(Evidence.value).like(f"%{term}%"),
+            ))
+        if not clauses:
+            continue
+        stmt = stmt.where(sa_exists().where(and_(
+            Evidence.person_id == Person.id, or_(*clauses),
+        )))
     if parsed.organizations:
         stmt = (
             stmt.join(Affiliation, Affiliation.person_id == Person.id)
@@ -240,11 +451,10 @@ def _filtered_stmt(parsed: NLQuery):
         from sqlalchemy import String as SAString  # noqa: F401  (used below)
 
         for term in parsed.name_terms:
-            pattern = f"%{term.lower()}%"
-            stmt = stmt.where(
-                func.lower(Person.canonical_name).like(pattern)
-                | func.lower(func.cast(Person.aliases, SAString)).like(pattern)
-            )
+            stmt = stmt.where(or_(
+                *_name_clauses(Person.canonical_name, term),
+                func.lower(func.cast(Person.aliases, SAString)).like(f"%\"{term.lower()}%"),
+            ))
     return stmt
 
 
@@ -256,7 +466,7 @@ def count_matches(session: Session, parsed: NLQuery) -> int:
     return session.execute(select(func.count()).select_from(inner)).scalar_one()
 
 
-FILTER_GROUPS = ("skills", "organizations", "locations", "countries", "name_terms")
+FILTER_GROUPS = ("skill_groups", "organizations", "locations", "countries", "name_terms")
 
 
 def diagnose_empty(session: Session, parsed: NLQuery) -> dict | None:
@@ -268,20 +478,19 @@ def diagnose_empty(session: Session, parsed: NLQuery) -> dict | None:
     """
     from dataclasses import replace
 
-    active = [g for g in FILTER_GROUPS
-              if getattr(parsed, g) or (g == "skills" and parsed.skill_patterns)]
+    active = [g for g in FILTER_GROUPS if getattr(parsed, g)]
     if len(active) < 2:
         return None
     for group in active:
         relaxed = replace(parsed)
         setattr(relaxed, group, [])
-        if group == "skills":
-            relaxed.skill_patterns = []
         if not has_filters(relaxed):
             continue
         n = count_matches(session, relaxed)
         if n:
-            dropped = getattr(parsed, group) or parsed.skill_patterns
+            dropped = getattr(parsed, group)
+            if group == "skill_groups":
+                dropped = [g["term"] for g in dropped]
             return {
                 "filter": group,
                 "values": list(dropped),
@@ -320,6 +529,29 @@ def execute(session: Session, parsed: NLQuery) -> list[Person]:
 
 
 def _search_openalex(query: str, limit: int) -> list[dict]:
+    from .connectors import get_connector
+
+    conn = get_connector("openalex")
+    # Topic first: "computer vision researchers" must find people who publish
+    # on computer vision, not people whose surname matches the words.
+    candidates = [c for c in conn.search_authors_by_topic(query, limit=limit)
+                  if _looks_like_a_person(c.get("name"))]
+    if not candidates:
+        candidates = [c for c in conn.search_authors(query, limit=limit)
+                      if _looks_like_a_person(c.get("name"))]
+    return [
+        {
+            "source": "openalex",
+            "external_id": c["id"],
+            "name": c.get("name"),
+            "affiliation": c.get("affiliation"),
+            "works_count": c.get("works_count"),
+        }
+        for c in candidates
+    ]
+
+
+def _old_search_openalex(query: str, limit: int) -> list[dict]:
     from .connectors import get_connector
 
     return [
@@ -397,7 +629,7 @@ def _search_dblp(query: str, limit: int) -> list[dict]:
 # terms; a semantic people search wants the whole question, because stripping
 # "engineers at ... in Bengaluru" throws away the very context it matches on.
 SUGGESTION_SEARCHERS = (
-    ("openalex", _search_openalex, False),
+    ("openalex", _search_openalex, True),
     ("semanticscholar", _search_semanticscholar, False),
     ("dblp", _search_dblp, False),
     # paid, and the only source that reaches non-academic roles: tried last
@@ -453,6 +685,33 @@ def _cache_record(session: Session, provider: str, query: str, found: int, store
     session.commit()
 
 
+# Sources whose full-profile fetch is a free public API, so a live search can
+# be turned into real stored people without spending anything.
+FREE_FETCH_SOURCES = ("openalex", "semanticscholar", "dblp")
+
+# Scholarly indexes carry entity records that are not people: conferences,
+# labs, societies, even "Computer Vision Syndrome". Ingesting them as persons
+# pollutes the graph, so they are rejected before any fetch.
+NOT_A_PERSON = re.compile(
+    r"\b(foundation|conference|workshop|symposium|proceedings|society|institute"
+    r"|laborator(y|ies)|university|college|committee|association|consortium"
+    r"|group|centre|center|department|journal|press|syndrome|corporation|inc"
+    r"|ltd|llc|gmbh|team|proj(ect)?|proceedings)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_a_person(name: str | None) -> bool:
+    """Filter index entities out of author search results."""
+    if not name or len(name) > 60:
+        return False
+    if NOT_A_PERSON.search(name):
+        return False
+    # a person's name is a couple of words, not a sentence
+    return 1 <= len(name.split()) <= 6
+MAX_FREE_FETCHES = 10
+
+
 def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
     """Ingest live results that arrived with a full payload.
 
@@ -465,14 +724,36 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
     from .ingest import ingest_profile
 
     stored = 0
+    fetched = 0
     for item in suggestions:
         raw, source = item.get("_raw"), item.get("_connector")
+        if not raw and item.get("source") in FREE_FETCH_SOURCES and item.get("external_id"):
+            # No payload came back with the search, but this source's fetch is
+            # free, so pulling the full profile costs nothing but a request.
+            # Bounded per query so one search cannot turn into 50 fetches.
+            if fetched >= MAX_FREE_FETCHES:
+                continue
+            source = item["source"]
+            fetched += 1
+            try:
+                profile = get_connector(source).fetch(item["external_id"])
+                person = ingest_profile(session, profile)
+                item["stored"] = True
+                item["person_id"] = str(person.id)
+                stored += 1
+            except Exception as exc:
+                item["stored"] = False
+                item["store_error"] = f"{type(exc).__name__}: {exc}"
+                logger.warning("could not fetch %s result: %s", source, exc)
+                session.rollback()
+            continue
         if not raw or not source:
             continue
         try:
             profile = get_connector(source).normalize(raw)
-            ingest_profile(session, profile)
+            person = ingest_profile(session, profile)
             item["stored"] = True
+            item["person_id"] = str(person.id)
             stored += 1
         except Exception as exc:
             # surfaced on the item so a caller can see the record was found
