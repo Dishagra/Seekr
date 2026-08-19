@@ -710,47 +710,30 @@ def _looks_like_a_person(name: str | None) -> bool:
     # a person's name is a couple of words, not a sentence
     return 1 <= len(name.split()) <= 6
 MAX_FREE_FETCHES = 10
+# concurrent profile fetches: enough to hide latency, gentle on the source
+FETCH_WORKERS = 5
 
 
 def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
-    """Ingest live results that arrived with a full payload.
+    """Ingest live results, so a query the corpus could not answer grows it.
 
-    Only applies to providers that return the whole person record in their
-    search response (Exa). Storing it costs no extra API call — the data is
-    already bought — and it means the next identical query is answered from
-    the graph instead of the provider.
+    Two kinds of result arrive here. Exa returns the whole person record in the
+    search response — already bought, so storing it costs nothing. The free
+    scholarly sources return only an identifier, so the profile has to be
+    fetched; that request is free, and bounded per query.
+
+    Fetches run concurrently because they are independent HTTP calls and doing
+    them one at a time put a live query near 30 seconds. Ingest stays on this
+    thread: a SQLAlchemy session is not safe to share.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     from .connectors import get_connector
     from .ingest import ingest_profile
 
-    stored = 0
-    fetched = 0
-    for item in suggestions:
-        raw, source = item.get("_raw"), item.get("_connector")
-        if not raw and item.get("source") in FREE_FETCH_SOURCES and item.get("external_id"):
-            # No payload came back with the search, but this source's fetch is
-            # free, so pulling the full profile costs nothing but a request.
-            # Bounded per query so one search cannot turn into 50 fetches.
-            if fetched >= MAX_FREE_FETCHES:
-                continue
-            source = item["source"]
-            fetched += 1
-            try:
-                profile = get_connector(source).fetch(item["external_id"])
-                person = ingest_profile(session, profile)
-                item["stored"] = True
-                item["person_id"] = str(person.id)
-                stored += 1
-            except Exception as exc:
-                item["stored"] = False
-                item["store_error"] = f"{type(exc).__name__}: {exc}"
-                logger.warning("could not fetch %s result: %s", source, exc)
-                session.rollback()
-            continue
-        if not raw or not source:
-            continue
+    def _keep(item: dict, profile) -> None:
+        nonlocal stored
         try:
-            profile = get_connector(source).normalize(raw)
             person = ingest_profile(session, profile)
             item["stored"] = True
             item["person_id"] = str(person.id)
@@ -760,8 +743,39 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
             # but not kept, rather than it vanishing silently
             item["stored"] = False
             item["store_error"] = f"{type(exc).__name__}: {exc}"
-            logger.warning("could not persist %s result: %s", source, exc)
+            logger.warning("could not persist %s result: %s", item.get("source"), exc)
             session.rollback()
+
+    stored = 0
+    to_fetch: list[dict] = []
+    for item in suggestions:
+        raw, source = item.get("_raw"), item.get("_connector")
+        if raw and source:
+            try:
+                _keep(item, get_connector(source).normalize(raw))
+            except Exception as exc:
+                item["stored"] = False
+                item["store_error"] = f"{type(exc).__name__}: {exc}"
+            continue
+        if item.get("source") in FREE_FETCH_SOURCES and item.get("external_id"):
+            if len(to_fetch) < MAX_FREE_FETCHES:
+                to_fetch.append(item)
+
+    if to_fetch:
+        def _pull(item: dict):
+            try:
+                return item, get_connector(item["source"]).fetch(item["external_id"]), None
+            except Exception as exc:
+                return item, None, exc
+
+        with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+            for item, profile, exc in pool.map(_pull, to_fetch):
+                if exc is not None:
+                    item["stored"] = False
+                    item["store_error"] = f"{type(exc).__name__}: {exc}"
+                    logger.warning("could not fetch %s result: %s", item.get("source"), exc)
+                    continue
+                _keep(item, profile)
     return stored
 
 

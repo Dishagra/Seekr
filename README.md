@@ -250,9 +250,26 @@ paying for the same people again next week. Two consequences:
 Keyed on your original query, not the leftover words — otherwise storing new
 people changes the residual string and the same request bills twice.
 
-Providers that return only an identifier (OpenAlex, Semantic Scholar, dblp)
-still yield suggestions you queue explicitly; they are free, so there is
-nothing to save.
+The free scholarly sources (OpenAlex, Semantic Scholar, dblp) return only an
+identifier, so their full profile has to be fetched — but that fetch is free,
+so up to `MAX_FREE_FETCHES` (10) per query are pulled and stored too. A query
+the corpus cannot answer therefore grows the corpus.
+
+People found this way are returned as results and flagged `from_live_search`
+(shown as a **new** tag in the UI). They deliberately bypass the corpus
+filter: that filter can only express what the corpus already knows, so a
+person fetched seconds ago would fail it and the round-trip would be wasted.
+
+### Topical discovery, not surname matching
+
+Asking OpenAlex for "Rust developers" by author name returns people *surnamed*
+Rust. Topical queries instead search works and take those works' authors, so
+"computer vision researchers" returns Zisserman, Simonyan and Szeliski. Author
+name search remains the fallback when the topical search finds nobody.
+
+Scholarly indexes also carry entity records that are not people — "Computer
+Vision Syndrome", "European Conference on Computer Vision", lab names. These
+are rejected before ingest rather than becoming persons in the graph.
 
 ### Web search and page rendering (free tiers)
 
