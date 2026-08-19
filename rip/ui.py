@@ -216,11 +216,15 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
 .vbtn.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 .vbtn.save.on{background:#0a66c2;border-color:#0a66c2;color:#fff}
 .chipbtn.muted{color:var(--faint);border-style:dashed}
-.ext{display:inline-flex;align-items:center;justify-content:center;margin-left:6px;
-  width:18px;height:18px;border-radius:4px;text-decoration:none;vertical-align:middle;
-  color:var(--muted);border:1px solid var(--line)}
-.ext:hover{color:var(--fg);border-color:var(--fg)}
-.ext.li:hover{color:#0a66c2;border-color:#0a66c2}
+/* Named plink, not brand: .brand is already the sidebar logo block. */
+.plinks{display:flex; gap:5px; margin-top:5px; flex-wrap:wrap}
+.plink{display:inline-flex; align-items:center; justify-content:center;
+  box-sizing:border-box; width:22px; height:22px; min-width:22px; flex:0 0 auto;
+  border-radius:5px; text-decoration:none; padding:0;
+  color:#fff; background:var(--plink); opacity:.92;
+  transition:opacity .12s ease, transform .12s ease}
+.plink svg{fill:currentColor; stroke:none; display:block}
+.plink:hover{opacity:1; transform:translateY(-1px)}
 .livetag{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:999px;
   font-size:10px;font-weight:600;letter-spacing:.02em;vertical-align:middle;
   background:var(--accent-soft,#e8f0fe);color:var(--accent,#1a56db)}
@@ -451,6 +455,62 @@ function searchTopbar(q){
   </div>`;
 }
 
+
+/* Profile links, drawn as the brand people recognise. Only URLs a source
+   actually published — never a handle guessed from someone's name. Ordered
+   by how much the link tells you about a person: OpenAlex is on all 50k
+   records and identifies nobody, so it sits last. */
+const BRANDS = [
+  ["linkedin.com", "LinkedIn", "#0a66c2",
+    '<path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5M2.5 9.5h5V21h-5zM10 9.5h4.7v1.6c.7-1.2 2-1.9 3.6-1.9 3 0 4.2 1.9 4.2 5.2V21h-5v-5.6c0-1.5-.5-2.4-1.8-2.4-1 0-1.6.7-1.9 1.4-.1.2-.1.6-.1.9V21h-5z"/>'],
+  ["github.com", "GitHub", "#24292f",
+    '<path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2"/>'],
+  ["scholar.google.com", "Google Scholar", "#4285f4",
+    '<path d="M12 2 1 8.5l11 6.5 9-5.3v6.8h2V8.5z"/><path d="M5.5 13.2v3.6c0 2 2.9 3.7 6.5 3.7s6.5-1.7 6.5-3.7v-3.6L12 17z"/>'],
+  ["orcid.org", "ORCID", "#a6ce39",
+    '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M8.2 6.1a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2m-.9 3.3h1.8v8.3H7.3zm4 0h3.3c2.6 0 4.2 1.9 4.2 4.2s-1.7 4.1-4.2 4.1h-3.3zm1.8 1.6v5.1h1.4c1.7 0 2.5-1.1 2.5-2.5s-.8-2.6-2.5-2.6z"/>'],
+  ["twitter.com", "X", "#111827",
+    '<path d="M17.5 3h3l-6.6 7.6L21.8 21h-6l-4.7-6.2L5.6 21h-3l7.1-8.1L2.5 3h6.2l4.3 5.7zm-1 16h1.7L7.6 4.7H5.8z"/>'],
+  ["x.com", "X", "#111827",
+    '<path d="M17.5 3h3l-6.6 7.6L21.8 21h-6l-4.7-6.2L5.6 21h-3l7.1-8.1L2.5 3h6.2l4.3 5.7zm-1 16h1.7L7.6 4.7H5.8z"/>'],
+  ["stackoverflow.com", "Stack Overflow", "#f48024",
+    '<path d="M17 21v-6h2v8H3v-8h2v6z"/><path d="m6.9 14.7 8.6 1.8.4-2-8.6-1.8zm1.1-4.6 8 3.7.8-1.8-8-3.7zm2.2-4.3 6.8 5.6 1.3-1.5-6.8-5.7zM14.5 1l-1.6 1.2 5.3 7.1 1.6-1.2z"/>'],
+  ["huggingface.co", "Hugging Face", "#ff9d00",
+    '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M8.5 9.5a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4m7 0a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4M12 18c-2.4 0-4.4-1.6-4.9-3.7h9.8C16.4 16.4 14.4 18 12 18"/>'],
+  ["semanticscholar.org", "Semantic Scholar", "#1857b6",
+    '<path d="M3 4h8.5c5 0 9.5 3.4 9.5 8.5S16.9 21 12 21H3l4-4h5c2.8 0 5-1.9 5-4.5S14.8 8 12 8H3z"/>'],
+  ["dblp.org", "dblp", "#004a99",
+    '<path d="M7 2h6.5c3.6 0 6 2.6 6 6.4V22H13V8.6C13 7 12 6 10.4 6H7zM4.5 10H9v12H4.5z"/>'],
+  ["wikipedia.org", "Wikipedia", "#3366cc",
+    '<path d="M2 5h5.6v1.4l-1.4.3 3.5 8.6 2.3-5.6-1.2-3-1.2-.3V5h5.2v1.4l-1.3.3 3.4 8.6 3.2-8.6-1.5-.3V5H22v1.4l-1.4.4L16.2 20h-1.5l-3-7.2L8.6 20H7.1L2.9 6.8 2 6.4z"/>'],
+  ["wikidata.org", "Wikidata", "#339966",
+    '<path d="M2 6h1.6v12H2zm2.9 0h1.6v12H4.9zm2.9 0h3.2v12H7.8zm4.5 0H14v12h-1.7zm3 0h3.2v12h-3.2zM22 6h-1.6v12H22z"/>'],
+  ["researchgate.net", "ResearchGate", "#00ccbb",
+    '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m-2.6 6h2.4c1.6 0 2.6 1 2.6 2.4 0 1.1-.6 1.9-1.6 2.2l2 3.4h-1.8l-1.8-3.1h-.6V16H9.4zm1.2 1.3v2.4h1c.8 0 1.3-.4 1.3-1.2s-.5-1.2-1.3-1.2z"/>'],
+  ["openalex.org", "OpenAlex", "#7c3aed",
+    '<path d="M12 2 2 20h4l6-11 6 11h4z"/>'],
+];
+const MAX_BRAND_LINKS = 6;
+
+function brandLinks(urls, max){
+  const seen = new Set();
+  const out = [];
+  for(const [host, label, color, path] of BRANDS){
+    const hit = (urls||[]).find(u=>{
+      try{ const h = new URL(u).hostname.replace(/^www\./, "");
+           return h === host || h.endsWith("." + host); }catch(e){ return false; }
+    });
+    if(!hit || seen.has(label)) continue;
+    seen.add(label);
+    out.push(`<a class="plink" href="${esc(hit)}" target="_blank" rel="noopener noreferrer"
+      title="${esc(label)}" aria-label="${esc(label)}" style="--plink:${color}"
+      onclick="event.stopPropagation()">
+      <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">${path}</svg></a>`);
+    if(out.length >= (max || MAX_BRAND_LINKS)) break;
+  }
+  return out.length ? `<div class="plinks">${out.join("")}</div>` : "";
+}
+
 /* ---------------- recent searches ---------------- */
 const RECENT_KEY = "seekr_recent";
 const recent = ()=>{ try{ return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; }catch(e){ return []; } };
@@ -659,17 +719,7 @@ function renderResults(data, opts={}){
     ].filter(Boolean).join(" · ");
     // fetched live for this query rather than already in the corpus
     const liveTag = p.from_live_search ? '<span class="livetag">new</span>' : "";
-    // Verified links only — never a guessed profile URL. This replaces the
-    // record id, which was shown to nobody's benefit.
-    const urls = p.profile_urls || [];
-    const li = urls.find(u=>/linkedin\.com/i.test(u));
-    const gh = urls.find(u=>/github\.com/i.test(u));
-    const links = [
-      li ? `<a class="ext li" href="${esc(li)}" target="_blank" rel="noopener noreferrer"
-        title="LinkedIn profile" onclick="event.stopPropagation()">${ICON.linkedin}</a>` : "",
-      gh ? `<a class="ext gh" href="${esc(gh)}" target="_blank" rel="noopener noreferrer"
-        title="GitHub profile" onclick="event.stopPropagation()">${ICON.github}</a>` : "",
-    ].join("");
+    const links = brandLinks(p.profile_urls);
     return `<tr onclick="location.hash='#/person/${p.id}'">
       <td class="nm">${esc(p.canonical_name||"Unnamed")}${liveTag}${links}</td>
       <td class="org">${primary?esc(primary):'<span class="muted">—</span>'}
@@ -873,6 +923,7 @@ async function renderPerson(id){
       <div style="flex:1; min-width:240px">
         <h1>${esc(p.canonical_name||"Unnamed")}</h1>
         <div class="role">${esc([p.current_role,p.current_organization,p.location].filter(Boolean).join(" · "))||"&nbsp;"}</div>
+        ${brandLinks(p.profile_urls, BRANDS.length)}
         <div class="badges">
           ${corroborated?`<span class="badge ok">Corroborated</span>`:""}
           ${disputed?`<span class="badge warn">${disputed} disputed</span>`:""}
