@@ -1,6 +1,7 @@
 from .github import GitHubConnector
 from .openalex import OpenAlexConnector
 from .dblp import DblpConnector
+from .exa import ExaConnector
 from .huggingface import HuggingFaceConnector
 from .orcid import OrcidConnector
 from .semanticscholar import SemanticScholarConnector
@@ -12,6 +13,7 @@ CONNECTORS = {
     "web": WebConnector,
     "wikidata": WikidataConnector,
     "dblp": DblpConnector,
+    "exa": ExaConnector,
     "github": GitHubConnector,
     "huggingface": HuggingFaceConnector,
     "openalex": OpenAlexConnector,

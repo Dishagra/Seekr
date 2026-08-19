@@ -258,6 +258,29 @@ def _search_semanticscholar(query: str, limit: int) -> list[dict]:
     ]
 
 
+def _search_exa(query: str, limit: int) -> list[dict]:
+    """People search over professional profiles. Costs money per call, so it
+    runs only when the free scholarly sources found nothing."""
+    import os
+
+    from .connectors import get_connector
+
+    if not os.environ.get("EXA_API_KEY"):
+        return []
+    return [
+        {
+            "source": "exa",
+            "external_id": c["id"],
+            "name": c.get("name"),
+            "affiliation": c.get("affiliation"),
+            "role": c.get("role"),
+            "location": c.get("location"),
+            "works_count": None,
+        }
+        for c in get_connector("exa").search_people(query, limit=limit)
+    ]
+
+
 def _search_dblp(query: str, limit: int) -> list[dict]:
     from .connectors import get_connector
 
@@ -279,6 +302,8 @@ SUGGESTION_SEARCHERS = (
     ("openalex", _search_openalex),
     ("semanticscholar", _search_semanticscholar),
     ("dblp", _search_dblp),
+    # paid, and the only source that reaches non-academic roles: tried last
+    ("exa", _search_exa),
 )
 MIN_USEFUL_SUGGESTIONS = 3
 

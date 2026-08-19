@@ -235,6 +235,70 @@ def cmd_bulk_ingest(args) -> None:
         sys.exit(1)
 
 
+def cmd_find_homepages(args) -> None:
+    """Search the web for homepages of people who have none, then ingest them.
+
+    Two stages on purpose: search finds candidate URLs, the web connector
+    reads them (honouring robots.txt). Uses free search-provider tiers; does
+    nothing at all when no search key is configured.
+    """
+    from sqlalchemy import func
+
+    from .ingest import run_connector
+    from .models import Affiliation, IdentityLink, Organization, Person, SourceRecord
+    from .websearch import available_backends, find_homepage
+
+    backends = available_backends()
+    if not backends:
+        raise SystemExit(
+            "no search backend configured — set TAVILY_API_KEY or SERPAPI_API_KEY"
+        )
+    init_db()
+    connector = get_connector("web")
+    print(f"searching with: {', '.join(backends)}")
+
+    with SessionLocal() as session:
+        # people who have no web source record yet
+        has_web = select(IdentityLink.person_id).join(
+            SourceRecord, SourceRecord.id == IdentityLink.source_record_id
+        ).where(SourceRecord.source == "web")
+        stmt = (
+            select(Person)
+            .where(Person.canonical_name.isnot(None), Person.merged_into.is_(None),
+                   ~Person.id.in_(has_web))
+            .limit(args.limit)
+        )
+        if args.min_sources > 1:
+            stmt = stmt.where(
+                select(func.count(IdentityLink.id))
+                .where(IdentityLink.person_id == Person.id)
+                .scalar_subquery() >= args.min_sources
+            )
+        people = session.execute(stmt).scalars().all()
+        print(f"{len(people)} people without a homepage on file")
+
+        found = ingested = 0
+        for person in people:
+            org = person.current_organization or session.execute(
+                select(Organization.name)
+                .join(Affiliation, Affiliation.organization_id == Organization.id)
+                .where(Affiliation.person_id == person.id).limit(1)
+            ).scalar()
+            candidates = find_homepage(person.canonical_name, org, limit=args.candidates)
+            if not candidates:
+                continue
+            found += 1
+            for candidate in candidates[: args.candidates]:
+                try:
+                    run_connector(session, connector, candidate["url"], enrich_chain=False)
+                    ingested += 1
+                    print(f"  {person.canonical_name} -> {candidate['url'][:70]}")
+                    break
+                except Exception as exc:
+                    print(f"  skip {candidate['url'][:56]}: {str(exc)[:60]}")
+        print(f"searched {len(people)}, candidates for {found}, ingested {ingested}")
+
+
 def cmd_deliver_webhooks(args) -> None:
     from .webhooks import deliver_pending, health
 
@@ -454,6 +518,13 @@ def main() -> None:
     p_bulk.add_argument("--no-enrich", action="store_true", default=True,
                         help="(default) skip the enrichment chain during bulk load")
 
+    p_home = sub.add_parser("find-homepages",
+                            help="search the web for people's homepages and read them")
+    p_home.add_argument("--limit", type=int, default=20, help="people to process")
+    p_home.add_argument("--candidates", type=int, default=2, help="URLs to try per person")
+    p_home.add_argument("--min-sources", type=int, default=1,
+                        help="only people already corroborated across N sources")
+
     p_hooks = sub.add_parser("deliver-webhooks", help="POST queued webhook deliveries")
     p_hooks.add_argument("--limit", type=int, default=100)
     p_hooks.add_argument("--fail-threshold", type=int, default=0,
@@ -501,6 +572,8 @@ def main() -> None:
         cmd_harvest(args)
     elif args.command == "bulk-ingest":
         cmd_bulk_ingest(args)
+    elif args.command == "find-homepages":
+        cmd_find_homepages(args)
     elif args.command == "deliver-webhooks":
         cmd_deliver_webhooks(args)
     elif args.command == "queue-stats":

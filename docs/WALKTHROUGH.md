@@ -130,6 +130,7 @@ original records are never destroyed.
 | **Wikidata** | an identity hub — links a person's ORCID, GitHub, Scholar and dblp IDs together |
 | **Stack Overflow** | answer history as skill evidence |
 | **Hugging Face** | published models and datasets |
+| **Exa** *(paid)* | professional profiles: job titles, employers, work history — the only non-academic source |
 | **Web pages** | personal sites: CV links, emails, cross-profile links |
 
 Scale is reachable through bulk harvesting rather than one-at-a-time calls:
@@ -145,11 +146,13 @@ for a million people.
 public scholarly or code footprint. Cross-source identity resolution. Telling
 you *why* it believes something.
 
-**Not good at:** corporate staff by job title. "Program managers at OYO" returns
-nothing, and would return nothing even with a perfect search engine, because no
-source we are permitted to query indexes that. It exists on LinkedIn, which
-forbids automated access and enforces it. Closing that gap needs either a
-licensed provider such as Apollo, or company team pages via the web connector.
+**Corporate roles** now work through Exa, a commercial search API: "product
+designers at Swiggy Bangalore" returns real people with roles and cities. Read
+the tradeoff first — Exa's person records are largely LinkedIn-derived. Seekr
+does not crawl LinkedIn, but these are personal records about identifiable
+people, so the originating URL is kept on every record and Exa is queried last,
+after the free scholarly sources. It is the one source where you should decide
+your lawful basis and retention policy deliberately.
 
 **Two limits worth knowing:** the hosted deployment serves a snapshot capped at
 ~14,000 people by a platform file-size limit — past that, point

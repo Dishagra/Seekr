@@ -374,12 +374,12 @@ function renderRows(data, opts){
     const suggBlock = sugg.length ? `
       <div class="resultcount">${sugg.length} live candidates — not indexed yet</div>
       <div class="results"><table class="list">
-        <thead><tr><th>Name</th><th>Affiliation</th><th>Source</th><th>Works</th><th>Add</th></tr></thead>
+        <thead><tr><th>Name</th><th>Affiliation</th><th>Role / place</th><th>Source</th><th>Add</th></tr></thead>
         <tbody>${sugg.map(x=>`<tr>
           <td class="nm">${esc(x.name||"(unnamed)")}</td>
           <td class="org">${esc(x.affiliation||"")||'<span class="muted">—</span>'}</td>
+          <td class="sk">${esc([x.role,x.location].filter(Boolean).join(" · "))||'<span class="muted">—</span>'}</td>
           <td class="src">${esc(x.source)}</td>
-          <td class="num">${x.works_count??"—"}</td>
           <td><button class="btn" onclick="queueOne('${esc(x.source)}','${esc(x.external_id)}',this)">Queue</button></td>
         </tr>`).join("")}</tbody></table></div>` : "";
 

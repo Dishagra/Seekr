@@ -200,6 +200,7 @@ menus from live data instead of a hardcoded list.
 | `dblp` | dblp.org (open, no key, 2s courtesy interval) | dblp PID | CS bibliography: homepage/Scholar/Wikipedia/Wikidata URLs → strong resolution keys, affiliations, awards, publications with co-author PIDs → discovery |
 | `huggingface` | huggingface.co/api (public, no key) | username | org memberships → affiliations, models/datasets → projects, pipeline tags + libraries → ML skill evidence |
 | `semanticscholar` | api.semanticscholar.org (official Graph API, no key; `SEMANTIC_SCHOLAR_API_KEY` for higher limits) | author ID | homepage → resolution link, affiliations, h-index/citations as evidence, papers deduped by DOI |
+| `exa` | api.exa.ai (**paid**, `EXA_API_KEY`) | Exa person id | the only source reaching non-academic roles: job title, employer, work history, location. **Records are LinkedIn-derived** — see the note below |
 | `web` | any public page, one URL at a time | URL | robots.txt honored before fetching; JSON-LD Person, Open Graph, ORCID, displayed emails, links to known profile hosts. No spidering |
 
 ### Auto-enrichment
@@ -218,6 +219,43 @@ Adding a source = one file in `rip/connectors/` emitting a
 The base connector (`rip/connectors/base.py`) provides polite HTTP: minimum
 request interval, retry with backoff on 5xx, rate-limit detection
 (429 / `x-ratelimit-remaining`) honoring `Retry-After`.
+
+### Finding people who aren't researchers
+
+Nine of the ten connectors index scholarly or open-source output, so someone
+with no publications and no public code is invisible to them. `exa` is the
+exception and the only way Seekr answers "product designers at Swiggy".
+
+**Know what you are ingesting.** Exa's person records are largely derived from
+LinkedIn profiles. Seekr does not crawl LinkedIn — Exa is queried under a
+commercial agreement and is responsible for its own index — but these are
+personal records about identifiable people who did not consent to being in
+your database. The originating URL is stored on every record so provenance is
+never hidden, and `exa` is tried **last** in live discovery so the free
+scholarly sources answer first and you only spend money when they cannot.
+Decide your lawful basis and retention policy before ingesting at volume.
+
+### Web search and page rendering (free tiers)
+
+These are infrastructure, not people sources: they find URLs and fetch pages.
+
+| Provider | Env var | Free tier | Used for |
+|---|---|---|---|
+| Tavily | `TAVILY_API_KEY` | 1,000 credits/month | finding homepages |
+| SerpApi | `SERPAPI_API_KEY` | 250 searches/month | homepage search fallback |
+| Firecrawl | `FIRECRAWL_API_KEY` | 1,000 credits/month | rendering JS-heavy pages |
+| ZenRows | `ZENROWS_API_KEY` | 5,000 credits/month | render fallback |
+| ScrapingBee | `SCRAPINGBEE_API_KEY` | 1,000 trial credits | render fallback |
+
+```bash
+# find homepages for people who have none, then read them
+python -m rip.cli find-homepages --limit 20 --min-sources 2
+```
+
+Each is skipped when its key is unset, so a default install makes no
+third-party calls. **robots.txt is always checked before any renderer** — the
+render services exist for pages that are technically hard, never to reach a
+page whose owner disallowed us.
 
 ### India-focused harvesting
 

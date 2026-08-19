@@ -10,6 +10,8 @@ paywall, no anti-bot circumvention; robots.txt is honored before fetching.
 """
 
 import json
+import logging
+import os
 import re
 import urllib.robotparser
 from html import unescape
@@ -34,6 +36,8 @@ ORCID_RE = re.compile(r"\b(\d{4}-\d{4}-\d{4}-\d{3}[\dX])\b")
 TAG_RE = re.compile(r"<[^>]+>")
 MAX_HTML = 400_000
 
+logger = logging.getLogger("rip.connectors.web")
+
 
 class WebConnector(BaseConnector):
     source = "web"
@@ -55,10 +59,74 @@ class WebConnector(BaseConnector):
 
     def fetch(self, identifier: str) -> NormalizedProfile:
         url = identifier if "://" in identifier else f"https://{identifier}"
+        # robots.txt is checked FIRST and gates everything below. The render
+        # services exist for pages that are technically hard (JavaScript,
+        # bot-shields on public content) — never to reach a page whose owner
+        # told us not to.
         if not self._robots_allows(url):
             raise PermissionError(f"robots.txt disallows fetching {url}")
-        html = self.get_text(url)[:MAX_HTML]
+        html = self._fetch_html(url)[:MAX_HTML]
         return self.normalize(url, html)
+
+    def _fetch_html(self, url: str) -> str:
+        """Plain request first; fall back to a render service only if needed.
+
+        Each fallback is skipped when its key is unset, so a default install
+        makes no third-party calls. Free tiers (Aug 2026): Firecrawl 1,000
+        credits/month, ZenRows 5,000/month, ScrapingBee 1,000 trial credits.
+        """
+        try:
+            html = self.get_text(url)
+            if html and len(html) > 500:
+                return html
+            logger.info("thin response from %s (%s bytes), trying a renderer", url, len(html or ""))
+        except Exception as exc:
+            logger.info("direct fetch failed for %s (%s), trying a renderer", url, exc)
+
+        for name, fetcher in (
+            ("firecrawl", self._via_firecrawl),
+            ("zenrows", self._via_zenrows),
+            ("scrapingbee", self._via_scrapingbee),
+        ):
+            if not os.environ.get(f"{name.upper()}_API_KEY"):
+                continue
+            try:
+                html = fetcher(url)
+                if html and len(html) > 200:
+                    logger.info("fetched %s via %s", url, name)
+                    return html
+            except Exception as exc:
+                logger.warning("%s failed for %s: %s", name, url, exc)
+        raise RuntimeError(f"could not fetch {url} by any available method")
+
+    def _via_firecrawl(self, url: str) -> str:
+        resp = self._client.post(
+            "https://api.firecrawl.dev/v1/scrape",
+            headers={"Authorization": f"Bearer {os.environ['FIRECRAWL_API_KEY']}"},
+            json={"url": url, "formats": ["html"]},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        data = (resp.json() or {}).get("data") or {}
+        return data.get("html") or data.get("rawHtml") or ""
+
+    def _via_zenrows(self, url: str) -> str:
+        resp = self._client.get(
+            "https://api.zenrows.com/v1/",
+            params={"apikey": os.environ["ZENROWS_API_KEY"], "url": url},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return resp.text
+
+    def _via_scrapingbee(self, url: str) -> str:
+        resp = self._client.get(
+            "https://app.scrapingbee.com/api/v1/",
+            params={"api_key": os.environ["SCRAPINGBEE_API_KEY"], "url": url},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return resp.text
 
     def renormalize(self, external_id: str, raw: dict) -> NormalizedProfile:
         return self.normalize(raw["url"], raw["html"])
