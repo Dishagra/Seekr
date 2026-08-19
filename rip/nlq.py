@@ -26,6 +26,27 @@ STOPWORDS = {
     "scientist", "scientists", "top", "first", "list", "give", "get", "best",
 }
 SKILL_ATTRS = ("skill", "research_interest", "specialization")
+# Country names -> ISO codes. Reference data, not a guess about people: it
+# lets "in India" become a real country filter even when no source recorded a
+# city. Extend freely; unknown names simply stay unmatched.
+COUNTRIES = {
+    "india": "IN", "united states": "US", "usa": "US", "america": "US",
+    "united kingdom": "GB", "uk": "GB", "britain": "GB", "england": "GB",
+    "germany": "DE", "france": "FR", "canada": "CA", "china": "CN",
+    "japan": "JP", "australia": "AU", "brazil": "BR", "spain": "ES",
+    "italy": "IT", "netherlands": "NL", "switzerland": "CH", "sweden": "SE",
+    "singapore": "SG", "israel": "IL", "south korea": "KR", "korea": "KR",
+    "russia": "RU", "poland": "PL", "belgium": "BE", "austria": "AT",
+    "denmark": "DK", "norway": "NO", "finland": "FI", "ireland": "IE",
+    "portugal": "PT", "greece": "GR", "turkey": "TR", "mexico": "MX",
+    "argentina": "AR", "chile": "CL", "south africa": "ZA", "egypt": "EG",
+    "nigeria": "NG", "kenya": "KE", "pakistan": "PK", "bangladesh": "BD",
+    "indonesia": "ID", "malaysia": "MY", "thailand": "TH", "vietnam": "VN",
+    "philippines": "PH", "new zealand": "NZ", "czech republic": "CZ",
+    "hungary": "HU", "romania": "RO", "ukraine": "UA", "saudi arabia": "SA",
+    "united arab emirates": "AE", "uae": "AE", "iran": "IR", "taiwan": "TW",
+    "hong kong": "HK", "colombia": "CO", "peru": "PE",
+}
 FUZZY_VOCAB_THRESHOLD = 90.0
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
@@ -38,6 +59,7 @@ class NLQuery:
     organizations: list[str] = field(default_factory=list)
     locations: list[str] = field(default_factory=list)
     name_terms: list[str] = field(default_factory=list)
+    countries: list[str] = field(default_factory=list)
     # terms that matched many vocabulary values: filtered by pattern rather
     # than by enumerating every match (which does not scale with the corpus)
     skill_patterns: list[str] = field(default_factory=list)
@@ -95,13 +117,23 @@ def parse(session: Session, query: str) -> NLQuery:
         if span & consumed:
             continue
         gram_l = gram.lower()
-        if all(t.lower() in STOPWORDS for t in gram_l.split()):
+        parts = gram_l.split()
+        if all(t in STOPWORDS for t in parts):
+            continue
+        # A phrase that opens or closes on a filler word ("in India",
+        # "learning in") is not a real term — it would match a skill that
+        # merely contains the preposition. The tighter n-gram covers the
+        # meaningful part, so skip this one.
+        if len(parts) > 1 and (parts[0] in STOPWORDS or parts[-1] in STOPWORDS):
             continue
         if gram_l in skills:
             result.skills.append(skills[gram_l])
             consumed |= span
         elif gram_l in orgs:
             result.organizations.append(orgs[gram_l])
+            consumed |= span
+        elif gram_l in COUNTRIES:
+            result.countries.append(COUNTRIES[gram_l])
             consumed |= span
         elif gram_l in locations:
             result.locations.append(locations[gram_l])
@@ -133,11 +165,14 @@ def parse(session: Session, query: str) -> NLQuery:
             result.skills.append(best[1])
             consumed.add(i)
 
-    # leftovers: capitalized tokens are treated as name terms, rest unmatched
+    # Leftovers. A capitalised word is NOT automatically a person's name:
+    # treating "Hyderabad" as one silently guarantees zero results. Only apply
+    # a name filter when somebody in the corpus actually has that name;
+    # otherwise report the term as unapplied and let the caller see why.
     for i, token in enumerate(tokens):
         if i in consumed or token.lower() in STOPWORDS:
             continue
-        if token[:1].isupper():
+        if token[:1].isupper() and _name_exists(session, token):
             result.name_terms.append(token)
         else:
             result.unmatched_terms.append(token)
@@ -148,10 +183,21 @@ def parse(session: Session, query: str) -> NLQuery:
     return result
 
 
+def _name_exists(session: Session, token: str) -> bool:
+    """Does anyone in the corpus have this word in their name?"""
+    pattern = f"%{token.lower()}%"
+    return session.execute(
+        select(Person.id).where(
+            func.lower(Person.canonical_name).like(pattern),
+            Person.merged_into.is_(None),
+        ).limit(1)
+    ).first() is not None
+
+
 def has_filters(parsed: NLQuery) -> bool:
     return bool(
         parsed.skills or parsed.skill_patterns or parsed.organizations
-        or parsed.locations or parsed.name_terms
+        or parsed.locations or parsed.name_terms or parsed.countries
     )
 
 
@@ -179,6 +225,8 @@ def _filtered_stmt(parsed: NLQuery):
             .join(Organization, Organization.id == Affiliation.organization_id)
             .where(func.lower(Organization.name).in_([o.lower() for o in parsed.organizations]))
         )
+    if parsed.countries:
+        stmt = stmt.where(func.upper(Person.country).in_(parsed.countries))
     if parsed.locations:
         stmt = stmt.where(or_(*[
             func.lower(Person.location).like(f"%{loc.split(',')[0].strip().lower()}%")

@@ -220,6 +220,8 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
   background:var(--danger-soft); color:var(--danger); border:1px solid transparent;
 }
 .banner.info{background:var(--accent-soft); color:var(--accent)}
+.banner.warnbar{background:var(--warn-soft); color:var(--warn); display:flex; align-items:center; gap:6px; flex-wrap:wrap}
+.banner.warnbar b{font-weight:600}
 
 /* ---------- person ---------- */
 .phead{display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:6px}
@@ -537,10 +539,12 @@ function renderResults(data, opts={}){
     ...(f.skill_patterns||[]).map(s=>`<span class="pill"><b>matches</b>${esc(s)}</span>`),
     ...(f.organizations||[]).map(o=>`<span class="pill"><b>org</b>${esc(o)}</span>`),
     ...(f.locations||[]).map(l=>`<span class="pill"><b>place</b>${esc(l)}</span>`),
+    ...(f.countries||[]).map(c=>`<span class="pill"><b>country</b>${esc(c)}</span>`),
     ...(f.name_terms||[]).map(n=>`<span class="pill"><b>name</b>${esc(n)}</span>`),
   ].join("") : "";
-  const unmatched = (data.unmatched_terms||[]).length
-    ? `<span class="pill warn">not applied: ${data.unmatched_terms.map(esc).join(", ")}</span>` : "";
+  const um = data.unmatched_terms||[];
+  const unmatched = um.length
+    ? `<span class="pill warn">not applied: ${um.map(esc).join(", ")}</span>` : "";
 
   const rows = data.results.map(p=>{
     const skills = (p.attributes||[])
@@ -567,6 +571,15 @@ function renderResults(data, opts={}){
   PAGE.offset = data.next_offset ?? PAGE.rows.length;
 
   const total = data.total_matches ?? PAGE.rows.length;
+  // A dropped constraint must be loud: results that silently ignore
+  // "in Hyderabad" read as wrong answers rather than a coverage gap.
+  const unmatchedBanner = (um.length && PAGE.rows.length) ? `
+    <div class="banner warnbar">
+      <b>${um.map(esc).join(", ")}</b> ${um.length===1?"was":"were"} not applied —
+      nothing in Seekr matches ${um.length===1?"that term":"those terms"} yet, so these
+      ${fmt(total)} results ignore ${um.length===1?"it":"them"}.
+      <button class="btn sm" onclick="runQuery('true')">Search live sources</button>
+    </div>` : "";
   const sugg = data.discovery_suggestions || [];
   const suggBlock = sugg.length ? `
     <section class="block"><h2>Live candidates <span class="n">${sugg.length}</span></h2>
@@ -601,7 +614,7 @@ function renderResults(data, opts={}){
       <div class="count">${PAGE.rows.length?`<b>${fmt(PAGE.rows.length)}</b> of ${fmt(total)} matching`:""}</div>
       <div class="pills">${pills}${unmatched}</div>
     </div>
-    ${main}${suggBlock}`;
+    ${unmatchedBanner}${main}${suggBlock}`;
 }
 function emptyState(title, body, action){
   return `<div class="card"><div class="empty">

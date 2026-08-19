@@ -798,6 +798,7 @@ def nl_query(
             "skill_patterns": parsed.skill_patterns,
             "organizations": parsed.organizations,
             "locations": parsed.locations,
+            "countries": parsed.countries,
             "name_terms": parsed.name_terms,
             "limit": parsed.limit,
             "offset": parsed.offset,

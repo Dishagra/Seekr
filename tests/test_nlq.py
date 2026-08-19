@@ -410,3 +410,44 @@ def test_facets_list_available_values(session):
         raise AssertionError("should reject unknown facet")
     except HTTPException as exc:
         assert exc.status_code == 422
+
+
+def test_place_name_is_never_treated_as_a_person_name(session):
+    """Regression: "python developers in Hyderabad" searched for people NAMED
+    Hyderabad, guaranteeing zero results instead of reporting the gap."""
+    seed(session)
+    parsed = parse(session, "top python developers in Hyderabad")
+    assert parsed.name_terms == []            # not a name filter
+    assert "Hyderabad" in parsed.unmatched_terms  # reported honestly
+
+
+def test_capitalised_word_is_a_name_filter_only_when_someone_has_it(session):
+    seed(session)
+    assert parse(session, "find Grace").name_terms == ["Grace"]
+    assert parse(session, "find Zzznobody").name_terms == []
+
+
+def test_country_names_become_country_filters(session):
+    from rip.normalize import OrgAffiliation
+
+    ingest_profile(session, make_profile(name="Asha Rao", country="IN",
+                                         organizations=[OrgAffiliation(name="Acme Labs")]))
+    parsed = parse(session, "researchers in India")
+    assert parsed.countries == ["IN"]
+    assert [p.canonical_name for p in execute(session, parsed)] == ["Asha Rao"]
+    assert parse(session, "people in Germany").countries == ["DE"]
+
+
+def test_preposition_phrases_do_not_hijack_skills(session):
+    """"in India" must not match a skill merely containing that phrase."""
+    from rip.normalize import EvidenceItem
+
+    ingest_profile(
+        session,
+        make_profile(name="Ravi Kumar", country="IN",
+                     evidence=[EvidenceItem(attribute_type="research_interest",
+                                            value="Social and Economic Development in India")]),
+    )
+    parsed = parse(session, "machine learning researchers in India")
+    assert parsed.countries == ["IN"]
+    assert "Social and Economic Development in India" not in parsed.skills
