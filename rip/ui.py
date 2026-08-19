@@ -132,8 +132,14 @@ input.search:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3p
 .btn:disabled{opacity:.5; cursor:default}
 .btn-row{display:flex; gap:6px; flex-wrap:wrap}
 
-.examples{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; align-items:center}
-.examples em{color:var(--faint); font-style:normal; font-size:12px; margin-right:2px}
+/* One row, never two: these are a hint, not a menu. Anything past the edge
+   scrolls sideways rather than pushing the results further down the page. */
+.examples{display:flex; gap:6px; flex-wrap:nowrap; margin-top:10px; align-items:center;
+  overflow-x:auto; scrollbar-width:none}
+.examples::-webkit-scrollbar{display:none}
+.examples em{color:var(--faint); font-style:normal; font-size:12px; margin-right:2px; flex:0 0 auto}
+.examples .chipbtn{flex:0 0 auto; max-width:220px; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap}
 .chipbtn{
   border:1px solid var(--line); background:var(--surface); color:var(--ink2);
   border-radius:99px; padding:3px 11px; font-size:12px;
@@ -466,7 +472,7 @@ async function paintTrending(){
     // searches for. Job titles are what people actually look for.
     const roles = await api("/v1/facets?field=role&limit=8");
     const chips = (roles.values||roles.facets||[])
-      .map(v=>v.value).filter(Boolean).slice(0,7);
+      .map(v=>v.value).filter(Boolean).slice(0,6);
     if(chips.length) box.innerHTML = `<em>Trending</em>` + chips.map(x=>
       `<button class="chipbtn" onclick="useExample(this)">${esc(x)}</button>`).join("");
   }catch(e){ /* keep the static examples if facets are unavailable */ }
