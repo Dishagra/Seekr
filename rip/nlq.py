@@ -394,7 +394,7 @@ def parse(session: Session, query: str) -> NLQuery:
             result.unmatched_terms.append(token)
             continue
         # not gated on capitalisation: people type "sricharan", not "Sricharan"
-        if _name_exists(session, token):
+        if _could_be_a_name(token) and _name_exists(session, token):
             result.name_terms.append(token)
         else:
             result.unmatched_terms.append(token)
@@ -425,6 +425,16 @@ def _name_clauses(column, token: str):
         func.lower(column).like(f"{t}, %"),
         func.lower(column).like(f"% {t}, %"),
     )
+
+
+def _name_like_query(query: str) -> bool:
+    """Is this worth asking an author-NAME index about?
+
+    dblp and Semantic Scholar match names and nothing else, so a technology
+    or a whole question produces surname collisions rather than answers.
+    """
+    words = query.split()
+    return 1 <= len(words) <= 3 and all(_could_be_a_name(w) for w in words)
 
 
 def _could_be_a_name(token: str) -> bool:
@@ -676,6 +686,9 @@ def _old_search_openalex(query: str, limit: int) -> list[dict]:
 def _search_semanticscholar(query: str, limit: int) -> list[dict]:
     from .connectors import get_connector
 
+    # an author-name index: asking it about "SaaS" returns people named Saas
+    if not _name_like_query(query):
+        return []
     return [
         {
             "source": "semanticscholar",
@@ -757,6 +770,9 @@ def _search_github(query: str, limit: int) -> list[dict]:
 def _search_dblp(query: str, limit: int) -> list[dict]:
     from .connectors import get_connector
 
+    # same as Semantic Scholar: dblp searches author names, nothing else
+    if not _name_like_query(query):
+        return []
     return [
         {
             "source": "dblp",
@@ -1001,6 +1017,16 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
                 profile = get_connector(item["source"]).fetch(item["external_id"])
                 if not (profile.name or "").strip():
                     raise ValueError("source returned a profile with no name")
+                term_words = {
+                    w for w in re.split(r"[^A-Za-z0-9+#.-]+", item.get("_term", "").lower())
+                    if len(w) > 2
+                }
+                if (profile.name or "").strip().lower() in term_words:
+                    # github.com/Intelligence08 is named "Intelligence": the
+                    # handle matches the query because it IS the query word
+                    raise ValueError(
+                        f"{item['external_id']} is named after the search term, not a person"
+                    )
                 if item["source"] == "github" and not _corroborated(profile, item.get("_term", "")):
                     raise ValueError(
                         f"{item['external_id']} matches '{item.get('_term')}' only in "
