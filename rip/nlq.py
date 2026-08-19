@@ -694,6 +694,45 @@ def _search_exa(query: str, limit: int) -> list[dict]:
     ]
 
 
+def _search_github(query: str, limit: int) -> list[dict]:
+    """Working engineers — the population the scholarly indexes cannot see.
+
+    Nobody publishes a paper about maintaining Kubernetes, so queries about
+    tools and open-source work come back empty from OpenAlex and dblp while
+    GitHub answers them directly.
+    """
+    from .connectors import get_connector
+
+    conn = get_connector("github")
+    # GitHub matches the literal string against login, name and bio, so a whole
+    # question finds nobody. Try the phrase, then its individual words, most
+    # distinctive first — "Kubernetes" is what identifies these people.
+    # Query grammar must not become the search: "designers" matched the users
+    # designerSejinOH and DESIGNERSWITHOUTBORDERS. Only distinctive words are
+    # worth asking about, and a question with none of them has no answer here.
+    terms = [
+        t for t in re.split(r"[^A-Za-z0-9.+#-]+", query)
+        if len(t) > 2 and t.lower() not in STOPWORDS and t.lower() not in ROLE_MODIFIERS
+    ]
+    if not terms:
+        return []
+    attempts = [query] if len(terms) > 1 else []
+    attempts += sorted(set(terms), key=len, reverse=True)
+    logins: list[str] = []
+    for attempt in attempts[:3]:
+        try:
+            logins, _total = conn.search_users(query=attempt, per_page=limit)
+        except Exception:
+            continue        # a throttled search is not a query failure
+        if logins:
+            break
+    return [
+        {"source": "github", "external_id": login, "name": login,
+         "affiliation": None, "works_count": None}
+        for login in logins
+    ]
+
+
 def _search_dblp(query: str, limit: int) -> list[dict]:
     from .connectors import get_connector
 
@@ -718,9 +757,29 @@ SUGGESTION_SEARCHERS = (
     ("openalex", _search_openalex, True),
     ("semanticscholar", _search_semanticscholar, False),
     ("dblp", _search_dblp, False),
+    # the leftover words, not the whole question: GitHub matches literal text
+    ("github", _search_github, False),
     # paid, and the only source that reaches non-academic roles: tried last
     ("exa", _search_exa, True),
 )
+
+def _always_run(source: str) -> bool:
+    """Sources that run even when earlier ones already found enough.
+
+    GitHub covers a population the scholarly indexes structurally cannot —
+    nobody publishes a paper about maintaining Kubernetes — so a query about
+    tools would otherwise be answered by whichever academic wrote about the
+    word. Its search is one request, so it always runs; fetching the profiles
+    is what the unauthenticated 60/hour budget cannot afford.
+    """
+    return source == "github"
+
+
+def _may_fetch_github(stored_so_far: int) -> bool:
+    """With a token, always. Without one, only when nothing else answered."""
+    import os
+
+    return bool(os.environ.get("GITHUB_TOKEN")) or stored_so_far == 0
 MIN_USEFUL_SUGGESTIONS = 3
 # providers that bill per call
 PAID_SOURCES = ("exa",)
@@ -779,7 +838,10 @@ def _cache_record(
 
 # Sources whose full-profile fetch is a free public API, so a live search can
 # be turned into real stored people without spending anything.
-FREE_FETCH_SOURCES = ("openalex", "semanticscholar", "dblp")
+FREE_FETCH_SOURCES = ("openalex", "semanticscholar", "dblp", "github")
+# GitHub costs two requests per profile against a 60/hour unauthenticated
+# budget, so it fetches fewer than the scholarly APIs do.
+PER_SOURCE_FETCH_LIMIT = {"github": 5}
 
 # Scholarly indexes carry entity records that are not people: conferences,
 # labs, societies, even "Computer Vision Syndrome". Ingesting them as persons
@@ -857,7 +919,10 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
                 item["store_error"] = f"{type(exc).__name__}: {exc}"
             continue
         if item.get("source") in FREE_FETCH_SOURCES and item.get("external_id"):
-            if len(to_fetch) < MAX_FREE_FETCHES:
+            src = item["source"]
+            cap = PER_SOURCE_FETCH_LIMIT.get(src, MAX_FREE_FETCHES)
+            if sum(1 for i in to_fetch if i["source"] == src) < cap \
+                    and len(to_fetch) < MAX_FREE_FETCHES + sum(PER_SOURCE_FETCH_LIMIT.values()):
                 to_fetch.append(item)
 
     if to_fetch:
@@ -893,16 +958,17 @@ def discovery_suggestions(
     if not terms:
         terms = parsed.skills[:1]
     query = " ".join(terms).strip()
-    if not query:
-        return []
     # stable across vocabulary changes, unlike the derived `query`
     cache_key = (parsed.raw or query).strip()
+    if not cache_key:
+        return []
 
     out: list[dict] = []
+    total_stored = 0
     # person ids from cached searches: found before, still the right answer
     replayed: list[str] = []
     for source, searcher, uses_full_query in SUGGESTION_SEARCHERS:
-        if len(out) >= MIN_USEFUL_SUGGESTIONS:
+        if len(out) >= MIN_USEFUL_SUGGESTIONS and not _always_run(source):
             break
         if not allow_paid and source in PAID_SOURCES:
             continue
@@ -918,21 +984,30 @@ def discovery_suggestions(
             replayed.extend(cached.person_ids or [])
             session.commit()
             continue
+        # A question made entirely of role words ("product designers who have
+        # worked on developer tools") leaves no residue at all. Fall back to
+        # what the user actually typed rather than searching for nothing.
+        search_for = (cache_key if uses_full_query else query) or cache_key
         try:
-            found = searcher(cache_key if uses_full_query else query, limit)
+            found = searcher(search_for, limit)
         except Exception:
             continue  # a throttled or unavailable source is not a query failure
         keep = []
         for item in found:
             if not item.get("external_id"):
                 continue
-            item["reason"] = (
-                f"live {source} search for "
-                f"'{cache_key if uses_full_query else query}'"
-            )
+            item["reason"] = f"live {source} search for '{search_for}'"
             item["ingest_command"] = f"rip.cli ingest {source} {item['external_id']}"
             keep.append(item)
-        stored = persist_suggestions(session, keep) if session is not None else 0
+        if source == "github" and not _may_fetch_github(total_stored):
+            # keep them as candidates to add, but do not spend the request
+            # budget pulling full profiles
+            for item in keep:
+                item["fetch_skipped"] = "github rate limit — set GITHUB_TOKEN"
+            stored = 0
+        else:
+            stored = persist_suggestions(session, keep) if session is not None else 0
+        total_stored += stored
         # A free source that found nothing is not worth remembering: nothing
         # was bought, and caching the miss would block the retry that a better
         # parse or a wider corpus would have answered. Paid providers still
