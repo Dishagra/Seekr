@@ -196,6 +196,9 @@ td.org{color:var(--ink2)}
 td.org .sub2{font-size:11.5px; color:var(--faint); margin-top:2px}
 td.sk{color:var(--muted); font-size:12.5px; max-width:340px}
 td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
+.livetag{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:999px;
+  font-size:10px;font-weight:600;letter-spacing:.02em;vertical-align:middle;
+  background:var(--accent-soft,#e8f0fe);color:var(--accent,#1a56db)}
 .srcpill{
   display:inline-block; font-family:var(--mono); font-size:10px; padding:1px 6px; margin:1px 3px 1px 0;
   border-radius:4px; background:var(--surface2); color:var(--muted); border:1px solid var(--line2);
@@ -558,8 +561,10 @@ function renderResults(data, opts={}){
         ? "now: "+esc(p.current_organization) : "",
       others.length ? "+"+others.length+" more" : "",
     ].filter(Boolean).join(" · ");
+    // fetched live for this query rather than already in the corpus
+    const liveTag = p.from_live_search ? '<span class="livetag">new</span>' : "";
     return `<tr onclick="location.hash='#/person/${p.id}'">
-      <td class="nm">${esc(p.canonical_name||"Unnamed")}<span class="id">${esc(p.id.slice(0,8))}</span></td>
+      <td class="nm">${esc(p.canonical_name||"Unnamed")}${liveTag}<span class="id">${esc(p.id.slice(0,8))}</span></td>
       <td class="org">${primary?esc(primary):'<span class="muted">—</span>'}
         ${orgSub?`<div class="sub2">${orgSub}</div>`:""}</td>
       <td class="org">${esc(p.location||"")||'<span class="muted">—</span>'}</td>
