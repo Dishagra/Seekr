@@ -64,12 +64,46 @@ STOPWORDS = {
     "knows", "understand", "understands", "spent", "time", "since",
     # generic product/role nouns: "product designers" must not reach
     # "Natural product bioactivities", and "tools" matches nothing useful
-    "product", "products", "tools", "tool", "projects", "project", "platform",
+    "tools", "tool", "platform",
+    # generic business nouns: "partner up with firms" must not reach
+    # "Risk Management in Financial Firms"
+    "firm", "firms", "company", "companies", "startup", "startups",
+    "organisation", "organisations", "organization", "organizations",
+    "business", "businesses", "agency", "agencies", "vendor", "vendors",
+    "client", "clients", "customer", "customers", "industry", "industries",
     "platforms", "application", "applications", "apps", "app", "solutions",
     "services", "service", "technology", "technologies", "tech", "software",
     "systems" if False else "__unused__",
 }
 STOPWORDS.discard("__unused__")
+
+# Words that name a job function rather than a subject — but ONLY when they sit
+# in front of a role noun. "Delivery managers" must not reach "Nanoparticle-Based
+# Drug Delivery", while "content delivery networks" still has to work.
+ROLE_MODIFIERS = {
+    "delivery", "program", "project", "product", "account", "operations",
+    "business", "engagement", "quality", "release", "service", "client",
+    "customer", "general", "technical", "solution", "solutions", "people",
+    "talent", "category", "channel", "portfolio", "practice",
+}
+ROLE_NOUNS = {
+    "manager", "managers", "management", "lead", "leads", "head", "heads",
+    "director", "directors", "officer", "officers", "analyst", "analysts",
+    "specialist", "specialists", "consultant", "consultants", "owner",
+    "owners", "designer", "designers", "architect", "architects",
+    "executive", "executives", "associate", "associates",
+}
+
+
+def _strip_role_modifiers(tokens: list[str]) -> list[str]:
+    """Drop a job-function word that only qualifies the role beside it."""
+    out = []
+    for i, tok in enumerate(tokens):
+        nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else ""
+        if tok.lower() in ROLE_MODIFIERS and nxt in ROLE_NOUNS:
+            continue
+        out.append(tok)
+    return out
 SKILL_ATTRS = ("skill", "research_interest", "specialization")
 # A GitHub bio reading "backend engineer, distributed systems" is real evidence
 # of what someone does, even though no source emitted it as a tidy skill value.
@@ -242,7 +276,7 @@ def parse(session: Session, query: str) -> NLQuery:
     skills, orgs, locations = _vocab(session)
     df = _token_frequency(skills)
     vocab_size = max(1, len(skills))
-    tokens = [t for t in re.findall(r"[a-zA-Z0-9+#.'-]+", cleaned)]
+    tokens = _strip_role_modifiers(re.findall(r"[a-zA-Z0-9+#.'-]+", cleaned))
     consumed: set[int] = set()
 
     for gram, span in _ngrams(tokens):
@@ -274,6 +308,10 @@ def parse(session: Session, query: str) -> NLQuery:
         elif gram_l in locations:
             result.locations.append(locations[gram_l])
             consumed |= span
+        elif len(parts) > 1 and _full_name_exists(session, gram_l):
+            # "geoffrey hinton" is a person, not an unknown topic phrase
+            result.name_terms.append(gram)
+            consumed |= span
         elif gram_l in ACRONYMS and ACRONYMS[gram_l] in skills:
             result.skill_groups.append({"term": gram, "values": [skills[ACRONYMS[gram_l]]]})
             consumed |= span
@@ -297,11 +335,22 @@ def parse(session: Session, query: str) -> NLQuery:
                     result.skill_groups.append(group)
                     consumed |= span
                     continue
+                # a phrase containing a real surname is a name search, and must
+                # not be swallowed as an unknown topic
+                if any(_name_exists(session, t) for t in parts):
+                    continue
+                # a part that means something on its own — a topic, an
+                # organization, a place, a country word, an acronym — keeps the
+                # phrase from swallowing it ("Indian AI" is India plus AI)
                 exact = any(
-                    t in skills or t in orgs or t in locations or t in COUNTRIES
+                    t in skills or t in orgs or t in locations
+                    or t in COUNTRIES or t in DEMONYMS or t in ACRONYMS
                     for t in parts
                 )
-                if len(parts) > 1 and not exact:
+                # only a two-word phrase blocks its words. A longer phrase that
+                # missed must let its sub-phrases try: "content delivery
+                # networks" is unknown, but "content delivery" is a real topic.
+                if len(parts) == 2 and not exact:
                     # A phrase the corpus does not know must not be split into
                     # its words: "computer vision" has no matching topic, and
                     # the bare word "computer" reaches EEG and Brain-Computer
@@ -339,7 +388,13 @@ def parse(session: Session, query: str) -> NLQuery:
     for i, token in enumerate(tokens):
         if i in consumed or token.lower() in STOPWORDS:
             continue
-        if token[:1].isupper() and _name_exists(session, token):
+        # A word the topic vocabulary uses is a subject, not a surname:
+        # "data" matched entity records like "G. DATA CyberDefense AG".
+        if df.get(token.lower(), 0) > 0:
+            result.unmatched_terms.append(token)
+            continue
+        # not gated on capitalisation: people type "sricharan", not "Sricharan"
+        if _name_exists(session, token):
             result.name_terms.append(token)
         else:
             result.unmatched_terms.append(token)
@@ -377,18 +432,44 @@ def _looks_like_a_name(token: str) -> bool:
     return len(token) >= 4 and not token.isupper()
 
 
+def _full_name_exists(session: Session, phrase: str) -> bool:
+    """Does a real person's name contain this whole phrase?
+
+    Checked against the matched name, not just the row: index entities that
+    slipped in ("HUA Computer Vision Group") would otherwise make "computer
+    vision" look like somebody's name.
+    """
+    rows = session.execute(
+        select(Person.canonical_name).where(
+            func.lower(Person.canonical_name).like(f"%{phrase}%"),
+            Person.merged_into.is_(None),
+        ).limit(20)
+    ).scalars().all()
+    # A name is written "Geoffrey Hinton", so the phrase has to open or close
+    # it. Buried in the middle it is a description, not a name: the index holds
+    # author records like "PhD Computer Vision Mariano Cabezas".
+    return any(
+        _looks_like_a_person(n)
+        and (n.lower().startswith(phrase) or n.lower().endswith(phrase))
+        for n in rows
+    )
+
+
 def _name_exists(session: Session, token: str) -> bool:
     """Does anyone in the corpus actually carry this word as part of a name?"""
     from sqlalchemy import or_
 
     if not _looks_like_a_name(token):
         return False
-    return session.execute(
-        select(Person.id).where(
+    rows = session.execute(
+        select(Person.canonical_name).where(
             or_(*_name_clauses(Person.canonical_name, token)),
             Person.merged_into.is_(None),
-        ).limit(1)
-    ).first() is not None
+        ).limit(20)
+    ).scalars().all()
+    # validated against the matched name: index entities like "Computer Vision
+    # Center" would otherwise make "computer" look like somebody's surname
+    return any(_looks_like_a_person(n) for n in rows)
 
 
 def has_filters(parsed: NLQuery) -> bool:
@@ -532,13 +613,18 @@ def _search_openalex(query: str, limit: int) -> list[dict]:
     from .connectors import get_connector
 
     conn = get_connector("openalex")
-    # Topic first: "computer vision researchers" must find people who publish
-    # on computer vision, not people whose surname matches the words.
-    candidates = [c for c in conn.search_authors_by_topic(query, limit=limit)
-                  if _looks_like_a_person(c.get("name"))]
-    if not candidates:
-        candidates = [c for c in conn.search_authors(query, limit=limit)
+    # A one- or two-word query is a person's name far more often than a
+    # subject, and works search answers it with whoever wrote a paper
+    # mentioning the word — "sricharan" returned Justine S. Ko.
+    looks_like_a_name_query = len(query.split()) <= 2
+    order = (conn.search_authors, conn.search_authors_by_topic) if looks_like_a_name_query \
+        else (conn.search_authors_by_topic, conn.search_authors)
+    candidates = []
+    for search in order:
+        candidates = [c for c in search(query, limit=limit)
                       if _looks_like_a_person(c.get("name"))]
+        if candidates:
+            break
     return [
         {
             "source": "openalex",
@@ -702,7 +788,12 @@ NOT_A_PERSON = re.compile(
     r"\b(foundation|conference|workshop|symposium|proceedings|society|institute"
     r"|laborator(y|ies)|university|college|committee|association|consortium"
     r"|group|centre|center|department|journal|press|syndrome|corporation|inc"
-    r"|ltd|llc|gmbh|team|proj(ect)?|proceedings)\b",
+    r"|ltd|llc|gmbh|team|proj(ect)?|proceedings"
+    # degree and title prefixes, and bare discipline names: the scholarly
+    # indexes carry "PhD Computer Vision Mariano Cabezas" and "Computer
+    # Engineering" as author records
+    r"|phd|ph\.d|prof|professor|coordinator|engineering|sciences?|studies"
+    r"|editor|editorial|anonymous|unknown|staff|admin)\b",
     re.IGNORECASE,
 )
 
@@ -713,8 +804,10 @@ def _looks_like_a_person(name: str | None) -> bool:
         return False
     if NOT_A_PERSON.search(name):
         return False
-    # a person's name is a couple of words, not a sentence
-    return 1 <= len(name.split()) <= 6
+    # A person's name is not a sentence. Initials are cheap ("André C. P. L.
+    # F. de Carvalho"), so count only the words that are not single letters.
+    words = [w for w in name.split() if len(w.strip(".")) > 1]
+    return 1 <= len(words) <= 5
 MAX_FREE_FETCHES = 10
 # concurrent profile fetches: enough to hide latency, gentle on the source
 FETCH_WORKERS = 5
@@ -786,7 +879,8 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
 
 
 def discovery_suggestions(
-    session: Session | None = None, parsed: NLQuery = None, limit: int = 10
+    session: Session | None = None, parsed: NLQuery = None, limit: int = 10,
+    allow_paid: bool = True,
 ) -> list[dict]:
     """Live author search across sources for terms the local corpus lacks.
 
@@ -810,6 +904,8 @@ def discovery_suggestions(
     for source, searcher, uses_full_query in SUGGESTION_SEARCHERS:
         if len(out) >= MIN_USEFUL_SUGGESTIONS:
             break
+        if not allow_paid and source in PAID_SOURCES:
+            continue
         # Already bought this answer recently? The people are in the graph, so
         # do not pay for it again. Keyed on the USER'S query, not the derived
         # search string: once new people are stored the residual string

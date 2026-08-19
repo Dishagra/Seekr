@@ -717,10 +717,11 @@ def nl_query(
     limit: int = Query(0, le=500, description="override the page size (0 = query default)"),
     offset: int = Query(0, ge=0, description="skip this many matches (paging)"),
     discover: str = Query(
-        "false",
-        description="false (default) = local corpus only; true = also return "
-        "live source suggestions; queue = also add them to the discovery-lead "
-        "queue for a worker. Never ingests inside this request.",
+        "auto",
+        description="auto (default) = search the FREE live sources when the "
+        "corpus cannot answer, and keep what they return; true = also allow "
+        "metered providers; false = local corpus only; queue = also add "
+        "candidates to the discovery-lead queue for a worker.",
     ),
     db: Session = Depends(get_db),
 ):
@@ -829,13 +830,17 @@ def nl_query(
         "discover_available": bool(not persons or parsed.unmatched_terms),
     }
     mode = str(discover).lower()
-    if mode in ("true", "queue", "1") and response["discover_available"]:
+    # "auto" is the default: a question the corpus cannot answer is exactly
+    # when live search is worth doing, and the free sources cost nothing.
+    # Metered providers stay opt-in.
+    allow_paid = mode in ("true", "queue", "1")
+    if mode in ("true", "queue", "1", "auto") and response["discover_available"]:
         from .nlq import discovery_suggestions, queue_suggestions
 
         # Live results are persisted when the provider returned a full person
         # payload: we already paid for that data, so keeping it means the same
         # query is answered from the graph next time instead of being re-bought.
-        suggestions = discovery_suggestions(db, parsed)
+        suggestions = discovery_suggestions(db, parsed, allow_paid=allow_paid)
         stored = sum(1 for s in suggestions if s.get("stored"))
         # id-only entries replayed from a cached search: they belong in the
         # results, not in the list of candidates a user can add
@@ -895,6 +900,76 @@ def nl_query(
         if mode == "queue":
             response["queued_leads"] = queue_suggestions(db, suggestions, q)
     return response
+
+
+@app.post("/v1/feedback")
+def post_feedback(payload: dict, db: Session = Depends(get_db)):
+    """Record that a person was a good or bad match for a query.
+
+    Stored, never applied. Seekr does not reorder anything by these votes —
+    that would be ranking, which belongs to the downstream tool. This is the
+    labelled data that tool can train on, exposed at GET /v1/feedback.
+    """
+    from .models import MatchFeedback, Person
+    from .nlq import _norm_query
+
+    person_id = str(payload.get("person_id") or "").strip()
+    verdict = str(payload.get("verdict") or "").strip().lower()
+    query = str(payload.get("query") or "").strip()
+    if verdict not in ("good", "bad"):
+        raise HTTPException(400, "verdict must be 'good' or 'bad'")
+    if not person_id or not query:
+        raise HTTPException(400, "person_id and query are required")
+    person = db.get(Person, person_id)
+    if person is None:
+        raise HTTPException(404, "no such person")
+
+    norm = _norm_query(query)
+    voter = str(payload.get("voter") or "anonymous")[:128]
+    row = db.execute(
+        select(MatchFeedback).where(
+            MatchFeedback.person_id == person_id,
+            MatchFeedback.query_norm == norm,
+            MatchFeedback.voter == voter,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = MatchFeedback(person_id=person_id, query_norm=norm, voter=voter)
+        db.add(row)
+    # a voter changing their mind replaces their vote rather than stacking
+    row.query_raw, row.verdict = query[:2000], verdict
+    row.note = (payload.get("note") or None)
+    db.commit()
+    return {"person_id": person_id, "query": query, "verdict": verdict, "voter": voter}
+
+
+@app.get("/v1/feedback")
+def list_feedback(
+    since_id: int = Query(0, ge=0, description="cursor: return rows after this id"),
+    limit: int = Query(200, ge=1, le=1000),
+    person_id: str = Query("", description="only this person's judgements"),
+    db: Session = Depends(get_db),
+):
+    """The judgement log, for the ranking tool to train on."""
+    from .models import MatchFeedback
+
+    stmt = select(MatchFeedback).where(MatchFeedback.id > since_id)
+    if person_id:
+        stmt = stmt.where(MatchFeedback.person_id == person_id)
+    rows = db.execute(stmt.order_by(MatchFeedback.id).limit(limit)).scalars().all()
+    return {
+        "count": len(rows),
+        "next_since_id": rows[-1].id if rows else since_id,
+        "has_more": len(rows) == limit,
+        "feedback": [
+            {
+                "id": r.id, "person_id": r.person_id, "query": r.query_raw,
+                "verdict": r.verdict, "note": r.note, "voter": r.voter,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ],
+    }
 
 
 @app.post("/v1/webhooks")

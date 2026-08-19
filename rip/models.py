@@ -369,6 +369,31 @@ class SearchCache(Base):
     person_ids: Mapped[list | None] = mapped_column(JSON, default=list)
 
 
+class MatchFeedback(Base):
+    """A human judgement that a person did or did not fit a query.
+
+    Deliberately inert here. Seekr never reads this back to order results —
+    ordering by judged fitness IS ranking, and ranking lives in the separate
+    downstream tool. This table exists so that tool has labelled training data
+    with the query it was judged against.
+    """
+
+    __tablename__ = "match_feedback"
+    __table_args__ = (
+        UniqueConstraint("person_id", "query_norm", "voter", name="uq_match_feedback"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("person.id"), index=True)
+    query_raw: Mapped[str] = mapped_column(Text)
+    query_norm: Mapped[str] = mapped_column(String(512), index=True)
+    # "good" or "bad" — a two-way judgement, not a score to average
+    verdict: Mapped[str] = mapped_column(String(16), index=True)
+    note: Mapped[str | None] = mapped_column(Text)
+    voter: Mapped[str] = mapped_column(String(128), default="anonymous")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class WebhookSubscription(Base):
     """A downstream system asking to be pushed change events."""
 

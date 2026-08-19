@@ -129,17 +129,17 @@ def test_discovery_suggestions_are_not_results(session, monkeypatch):
     assert "score" not in str(resp)
 
 
-def test_discover_defaults_off(session, monkeypatch):
-    """Live search is opt-in: default off over HTTP, and off means no fetch."""
+def test_discover_defaults_to_free_sources_only(session, monkeypatch):
+    """Default searches live, but never a metered provider."""
     import inspect
 
     from rip.api import app, nl_query
 
     # declared default (what an HTTP caller gets without the param)
-    assert inspect.signature(nl_query).parameters["discover"].default.default == "false"
+    assert inspect.signature(nl_query).parameters["discover"].default.default == "auto"
     schema = app.openapi()["paths"]["/v1/query"]["get"]["parameters"]
     discover_param = next(p for p in schema if p["name"] == "discover")
-    assert discover_param["schema"]["default"] == "false"
+    assert discover_param["schema"]["default"] == "auto"
     assert discover_param["required"] is False
 
     def boom(source):
@@ -150,6 +150,25 @@ def test_discover_defaults_off(session, monkeypatch):
         resp = nl_query(q="radioactivity pioneers", discover=off, db=session)
         assert "discovery_suggestions" not in resp
         assert "queued_leads" not in resp
+
+
+def test_auto_discover_never_calls_a_metered_provider(session, monkeypatch):
+    """The free sources answer by default; Exa costs money and stays opt-in."""
+    from rip.api import nl_query
+
+    called = []
+
+    def fake_exa(query, limit):
+        called.append(query)
+        return [{"source": "exa", "external_id": "X1", "name": "Paid Person"}]
+
+    monkeypatch.setattr("rip.nlq.SUGGESTION_SEARCHERS",
+                        (("exa", fake_exa, True),))
+    nl_query(q="quantum basketweaving", discover="auto", db=session)
+    assert called == []                      # not bought
+
+    nl_query(q="quantum basketweaving", discover="true", db=session)
+    assert called                            # explicitly asked for, so allowed
 
 
 class _FakeSearcher:
@@ -580,3 +599,46 @@ def test_no_diagnosis_when_only_one_filter(session):
     seed(session)
     parsed = parse(session, "Zzznothing")
     assert diagnose_empty(session, parsed) is None
+
+
+def test_match_feedback_is_recorded_but_never_ranks(session):
+    """Votes are stored for the downstream tool and change no ordering here."""
+    from rip.api import list_feedback, nl_query, post_feedback
+    from rip.models import Person
+
+    seed(session)
+    people = session.query(Person).order_by(Person.canonical_name).all()
+    before = [p["canonical_name"]
+              for p in nl_query(q="rust", discover="false", db=session)["results"]]
+
+    post_feedback({"person_id": str(people[0].id), "query": "rust", "verdict": "bad"}, db=session)
+    post_feedback({"person_id": str(people[-1].id), "query": "rust", "verdict": "good",
+                   "note": "exactly right", "voter": "disha"}, db=session)
+
+    after = [p["canonical_name"] for p in nl_query(q="rust", discover="false", db=session)["results"]]
+    if before:
+        assert after == before          # a bad vote does not demote, a good one does not promote
+
+    log = list_feedback(since_id=0, limit=100, person_id="", db=session)
+    assert log["count"] == 2
+    assert {f["verdict"] for f in log["feedback"]} == {"good", "bad"}
+    assert any(f["note"] == "exactly right" for f in log["feedback"])
+
+    # re-voting replaces, never stacks
+    post_feedback({"person_id": str(people[0].id), "query": "rust", "verdict": "good"}, db=session)
+    log = list_feedback(since_id=0, limit=100, person_id="", db=session)
+    assert log["count"] == 2
+
+
+def test_feedback_rejects_a_bad_verdict(session):
+    import pytest
+    from fastapi import HTTPException
+
+    from rip.api import post_feedback
+    from rip.models import Person
+
+    seed(session)
+    pid = str(session.query(Person).first().id)
+    for bad in ("maybe", "", "5"):
+        with pytest.raises(HTTPException):
+            post_feedback({"person_id": pid, "query": "rust", "verdict": bad}, db=session)

@@ -196,6 +196,13 @@ td.org{color:var(--ink2)}
 td.org .sub2{font-size:11.5px; color:var(--faint); margin-top:2px}
 td.sk{color:var(--muted); font-size:12.5px; max-width:340px}
 td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
+.vote{white-space:nowrap}
+.vbtn{background:none;border:1px solid var(--line);border-radius:6px;padding:2px 6px;
+  margin-right:4px;cursor:pointer;color:var(--muted);line-height:1}
+.vbtn:hover{border-color:var(--fg);color:var(--fg)}
+.vbtn.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.ext{display:inline-block;margin-left:6px;padding:0 5px;border-radius:3px;font-size:10px;
+  font-weight:700;text-decoration:none;background:#0a66c2;color:#fff;vertical-align:middle}
 .livetag{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:999px;
   font-size:10px;font-weight:600;letter-spacing:.02em;vertical-align:middle;
   background:var(--accent-soft,#e8f0fe);color:var(--accent,#1a56db)}
@@ -316,6 +323,8 @@ const ICON = {
   plug:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v5"/></svg>',
   caret:'<svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
   back:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+  up:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 14l5-5 5 5"/></svg>',
+  down:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10l5 5 5-5"/></svg>',
   empty:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg>',
 };
 
@@ -563,13 +572,23 @@ function renderResults(data, opts={}){
     ].filter(Boolean).join(" · ");
     // fetched live for this query rather than already in the corpus
     const liveTag = p.from_live_search ? '<span class="livetag">new</span>' : "";
+    // verified links only — never a guessed profile URL
+    const li = (p.profile_urls||[]).find(u=>/linkedin\.com/i.test(u));
+    const liLink = li ? `<a class="ext" href="${esc(li)}" target="_blank" rel="noopener noreferrer"
+      title="LinkedIn profile" onclick="event.stopPropagation()">in</a>` : "";
     return `<tr onclick="location.hash='#/person/${p.id}'">
-      <td class="nm">${esc(p.canonical_name||"Unnamed")}${liveTag}<span class="id">${esc(p.id.slice(0,8))}</span></td>
+      <td class="nm">${esc(p.canonical_name||"Unnamed")}${liveTag}${liLink}<span class="id">${esc(p.id.slice(0,8))}</span></td>
       <td class="org">${primary?esc(primary):'<span class="muted">—</span>'}
         ${orgSub?`<div class="sub2">${orgSub}</div>`:""}</td>
       <td class="org">${esc(p.location||"")||'<span class="muted">—</span>'}</td>
       <td class="sk">${skills||'<span class="muted">—</span>'}</td>
       <td>${srcs.length?srcs.map(s=>`<span class="srcpill">${esc(s)}</span>`).join(""):'<span class="muted">—</span>'}</td>
+      <td class="vote" onclick="event.stopPropagation()">
+        <button class="vbtn" title="Good match for this query"
+          onclick="vote('${p.id}','good',this)">${ICON.up}</button>
+        <button class="vbtn" title="Bad match for this query"
+          onclick="vote('${p.id}','bad',this)">${ICON.down}</button>
+      </td>
     </tr>`;
   });
   PAGE.rows = PAGE.rows.concat(rows);
@@ -578,12 +597,14 @@ function renderResults(data, opts={}){
   const total = data.total_matches ?? PAGE.rows.length;
   // A dropped constraint must be loud: results that silently ignore
   // "in Hyderabad" read as wrong answers rather than a coverage gap.
-  const unmatchedBanner = (um.length && PAGE.rows.length) ? `
+  const unmatchedBanner = um.length ? `
     <div class="banner warnbar">
       <b>${um.map(esc).join(", ")}</b> ${um.length===1?"was":"were"} not applied —
-      nothing in Seekr matches ${um.length===1?"that term":"those terms"} yet, so these
-      ${fmt(total)} results ignore ${um.length===1?"it":"them"}.
-      <button class="btn sm" onclick="runQuery('true')">Search live sources</button>
+      nothing in Seekr matches ${um.length===1?"that term":"those terms"} yet${
+        PAGE.rows.length
+          ? `, so these ${fmt(total)} results ignore ${um.length===1?"it":"them"}`
+          : ""}.
+      <button class="btn sm" onclick="runQuery('true')">Search paid sources too</button>
     </div>` : "";
   const sugg = data.discovery_suggestions || [];
   const suggBlock = sugg.length ? `
@@ -601,7 +622,7 @@ function renderResults(data, opts={}){
   let main;
   if(PAGE.rows.length){
     main = `<div class="card"><div class="tablewrap"><table class="list">
-        <thead><tr><th>Name</th><th>Organization</th><th>Location</th><th>Skills &amp; interests</th><th>Sources</th></tr></thead>
+        <thead><tr><th>Name</th><th>Organization</th><th>Location</th><th>Skills &amp; interests</th><th>Sources</th><th title="Tell the ranking tool whether this fits your query">Match</th></tr></thead>
         <tbody>${PAGE.rows.join("")}</tbody></table></div>
       ${data.has_more?`<div class="loadmore"><button class="btn" id="more" onclick="loadMore()">Load 50 more</button></div>`:""}
       </div>`;
@@ -629,6 +650,20 @@ function emptyState(title, body, action){
     <h3>${esc(title)}</h3><p>${esc(body)}</p>${action||""}
   </div></div>`;
 }
+// Feedback is recorded against the query it was judged on. It is NOT used to
+// reorder anything here — Seekr does not rank. It is training data for the
+// separate ranking tool, readable at GET /v1/feedback.
+async function vote(personId, verdict, btn){
+  const cell = btn.parentElement;
+  cell.querySelectorAll(".vbtn").forEach(b=>b.classList.remove("on"));
+  btn.classList.add("on");
+  try{
+    await api("/v1/feedback", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({person_id: personId, verdict, query: PAGE.q || ""})});
+    btn.title = "Recorded";
+  }catch(e){ btn.classList.remove("on"); btn.title = "Could not record: "+e.message; }
+}
+
 async function queueOne(source, externalId, btn){
   btn.disabled = true; btn.textContent = "Adding…";
   try{

@@ -361,6 +361,50 @@ def cmd_queue_stats(args) -> None:
             )
 
 
+def cmd_purge_nonpersons(args) -> None:
+    """Remove records that are index entities, not people.
+
+    Scholarly indexes list conferences, labs and universities as authors, so
+    they arrive as persons and then pollute name search — "computer" starts to
+    look like a surname. New ones are rejected at ingest; this clears the ones
+    that arrived before that guard existed.
+    """
+    from sqlalchemy import delete, select
+
+    from . import models as M
+    from .db import SessionLocal
+    from .nlq import _looks_like_a_person
+
+    session = SessionLocal()
+    rows = session.execute(
+        select(M.Person.id, M.Person.canonical_name).where(M.Person.merged_into.is_(None))
+    ).all()
+    doomed = [(i, n) for i, n in rows if not _looks_like_a_person(n)]
+    print(f"{len(doomed)} of {len(rows)} records are not people")
+    for _, name in doomed[:20]:
+        print(f"   - {name[:70]}")
+    if len(doomed) > 20:
+        print(f"   ... and {len(doomed) - 20} more")
+    if not doomed:
+        return
+    if not getattr(args, "yes", False):
+        print("\nre-run with --yes to delete them")
+        return
+    ids = [i for i, _ in doomed]
+    for name in ("Affiliation", "AttributeConflict", "Authorship", "ChangeLog",
+                 "Contribution", "Evidence", "IdentityLink", "MergeCandidate",
+                 "PersonKey", "PersonNameToken"):
+        model = getattr(M, name, None)
+        col = getattr(model, "person_id", None) if model else None
+        if col is None:
+            continue
+        n = session.execute(delete(model).where(col.in_(ids))).rowcount
+        if n:
+            print(f"  {model.__tablename__}: {n}")
+    print(f"  person: {session.execute(delete(M.Person).where(M.Person.id.in_(ids))).rowcount}")
+    session.commit()
+
+
 def cmd_check_db(args) -> None:
     """Print engine, journal mode, credentials and queue depths."""
     import os
@@ -535,6 +579,10 @@ def main() -> None:
 
     sub.add_parser("check-db", help="engine, journal mode, queue depths, credentials")
 
+    p_purge = sub.add_parser("purge-nonpersons",
+                             help="remove index entities stored as people (labs, conferences)")
+    p_purge.add_argument("--yes", action="store_true", help="actually delete; otherwise dry-run")
+
     p_worker = sub.add_parser("worker", help="continuously drain the discovery-lead queue")
     p_worker.add_argument("--poll-interval", type=float, default=30.0)
     p_worker.add_argument("--limit", type=int, default=25)
@@ -580,6 +628,8 @@ def main() -> None:
         cmd_queue_stats(args)
     elif args.command == "check-db":
         cmd_check_db(args)
+    elif args.command == "purge-nonpersons":
+        cmd_purge_nonpersons(args)
     elif args.command == "worker":
         cmd_worker(args)
     elif args.command == "serve":
