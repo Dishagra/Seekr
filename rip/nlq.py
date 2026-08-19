@@ -406,7 +406,10 @@ SUGGESTION_SEARCHERS = (
 MIN_USEFUL_SUGGESTIONS = 3
 
 
-SEARCH_TTL_DAYS = int(os.environ.get("SEEKR_SEARCH_TTL_DAYS", "30"))
+# A cached live search is reused for this long before the provider is asked
+# again. Short enough that job changes surface within a week; long enough that
+# repeating a search costs nothing.
+SEARCH_TTL_DAYS = int(os.environ.get("SEEKR_SEARCH_TTL_DAYS", "7"))
 
 
 def _norm_query(q: str) -> str:

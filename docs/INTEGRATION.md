@@ -196,7 +196,7 @@ request:
 `true` and `queue` both **store** any result that arrived with a full person
 payload, and report the count as `stored_from_live`. Those people are then
 returned as ordinary results and are answerable from the graph afterwards; the
-same query will not be bought again for 30 days. `discover=false` (the default)
+same query will not be bought again for 7 days. `discover=false` (the default)
 remains strictly read-only.
 
 When filters combine to zero, `empty_reason` names the filter responsible —

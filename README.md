@@ -245,7 +245,7 @@ paying for the same people again next week. Two consequences:
   the query is re-parsed after storing (a company we had never heard of is a
   real filter once its people are in the graph)
 - a `search_cache` row records each provider/query pair, so repeating a query
-  within `SEEKR_SEARCH_TTL_DAYS` (default 30) skips the paid call entirely
+  within `SEEKR_SEARCH_TTL_DAYS` (default 7) skips the paid call entirely
 
 Keyed on your original query, not the leftover words — otherwise storing new
 people changes the residual string and the same request bills twice.
@@ -402,6 +402,7 @@ you run several workers at once.
 | `SEMANTIC_SCHOLAR_API_KEY` | avoids shared-pool 429s |
 | `OPENALEX_MAILTO` | polite pool: higher, more reliable limits |
 | `RIP_LEAD_BATCH` | leads drained per nightly run (default 100) |
+| `SEEKR_SEARCH_TTL_DAYS` | reuse a cached live search for this many days (default 7) |
 | `RIP_DATABASE_URL` | defaults to `sqlite:///rip.db` |
 | `RIP_API_TOKEN` | set on the *serving* side; makes `/v1` require a bearer token |
 
