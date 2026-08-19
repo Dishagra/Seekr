@@ -64,6 +64,7 @@ def _migrate() -> None:
     additive = {
         "identity_link": [("review_state", "VARCHAR(32) DEFAULT 'unreviewed'")],
         "person": [("merged_into", "VARCHAR(36)"), ("country", "VARCHAR(2)")],
+        "search_cache": [("person_ids", "TEXT")],
     }
     _backfill_name_tokens(inspector)
     for table, columns in additive.items():

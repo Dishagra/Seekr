@@ -636,6 +636,8 @@ SUGGESTION_SEARCHERS = (
     ("exa", _search_exa, True),
 )
 MIN_USEFUL_SUGGESTIONS = 3
+# providers that bill per call
+PAID_SOURCES = ("exa",)
 
 
 # A cached live search is reused for this long before the provider is asked
@@ -666,7 +668,10 @@ def _cache_lookup(session: Session, provider: str, query: str):
     return row if age < timedelta(days=SEARCH_TTL_DAYS) else None
 
 
-def _cache_record(session: Session, provider: str, query: str, found: int, stored: int) -> None:
+def _cache_record(
+    session: Session, provider: str, query: str, found: int, stored: int,
+    person_ids: list[str] | None = None,
+) -> None:
     from datetime import datetime, timezone
 
     from .models import SearchCache
@@ -681,6 +686,7 @@ def _cache_record(session: Session, provider: str, query: str, found: int, store
         row = SearchCache(provider=provider, query_norm=_norm_query(query), query_raw=query[:512])
         session.add(row)
     row.result_count, row.stored_count = found, stored
+    row.person_ids = person_ids or []
     row.ran_at = datetime.now(timezone.utc)
     session.commit()
 
@@ -799,6 +805,8 @@ def discovery_suggestions(
     cache_key = (parsed.raw or query).strip()
 
     out: list[dict] = []
+    # person ids from cached searches: found before, still the right answer
+    replayed: list[str] = []
     for source, searcher, uses_full_query in SUGGESTION_SEARCHERS:
         if len(out) >= MIN_USEFUL_SUGGESTIONS:
             break
@@ -806,7 +814,13 @@ def discovery_suggestions(
         # do not pay for it again. Keyed on the USER'S query, not the derived
         # search string: once new people are stored the residual string
         # changes, and keying on that would bill for the same request twice.
-        if session is not None and _cache_lookup(session, source, cache_key):
+        cached = _cache_lookup(session, source, cache_key) if session is not None else None
+        if cached:
+            # Free, but not empty: replay the people this search already found,
+            # so a repeat query returns the same answers it did the first time.
+            cached.hits = (cached.hits or 0) + 1
+            replayed.extend(cached.person_ids or [])
+            session.commit()
             continue
         try:
             found = searcher(cache_key if uses_full_query else query, limit)
@@ -823,10 +837,27 @@ def discovery_suggestions(
             item["ingest_command"] = f"rip.cli ingest {source} {item['external_id']}"
             keep.append(item)
         stored = persist_suggestions(session, keep) if session is not None else 0
-        if session is not None:
-            _cache_record(session, source, cache_key, len(keep), stored)
+        # A free source that found nothing is not worth remembering: nothing
+        # was bought, and caching the miss would block the retry that a better
+        # parse or a wider corpus would have answered. Paid providers still
+        # cache their misses — that is where the money is.
+        if session is not None and (keep or source in PAID_SOURCES):
+            _cache_record(
+                session, source, cache_key, len(keep), stored,
+                [i["person_id"] for i in keep if i.get("person_id")],
+            )
         out.extend(keep)
-    return out[: limit * 2]
+    result = out[: limit * 2]
+    # Replayed people carry no suggestion payload — they are already in the
+    # graph. They ride along as id-only entries so the caller can include them
+    # in results, and are not shown as "live candidates" to add.
+    seen_ids = {i.get("person_id") for i in result}
+    result.extend(
+        {"person_id": pid, "replayed": True}
+        for pid in dict.fromkeys(replayed)
+        if pid not in seen_ids
+    )
+    return result
 
 
 def queue_suggestions(session: Session, suggestions: list[dict], query: str) -> int:

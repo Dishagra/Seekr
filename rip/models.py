@@ -362,6 +362,11 @@ class SearchCache(Base):
     stored_count: Mapped[int] = mapped_column(Integer, default=0)
     ran_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     hits: Mapped[int] = mapped_column(Integer, default=0)  # times reused
+    # The people this search produced. Without them a cache hit skips the
+    # provider AND loses its answers: the corpus filter cannot express what
+    # the search was actually looking for, so the person it found would not
+    # come back. Remembering the ids makes a repeat query free AND complete.
+    person_ids: Mapped[list | None] = mapped_column(JSON, default=list)
 
 
 class WebhookSubscription(Base):

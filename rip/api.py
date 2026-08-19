@@ -837,12 +837,17 @@ def nl_query(
         # query is answered from the graph next time instead of being re-bought.
         suggestions = discovery_suggestions(db, parsed)
         stored = sum(1 for s in suggestions if s.get("stored"))
+        # id-only entries replayed from a cached search: they belong in the
+        # results, not in the list of candidates a user can add
+        replayed = [s for s in suggestions if s.get("replayed")]
+        suggestions = [s for s in suggestions if not s.get("replayed")]
         for s in suggestions:
             s.pop("_raw", None)
             s.pop("_connector", None)
         response["discovery_suggestions"] = suggestions
         response["stored_from_live"] = stored
-        if stored:
+        response["replayed_from_cache"] = len(replayed)
+        if stored or replayed:
             # The corpus just grew, and so did the vocabulary: terms that were
             # unmatched a moment ago (a company name we had never seen) are now
             # real filters. Re-parse before re-running, or the people we just
@@ -859,7 +864,9 @@ def nl_query(
             # results the user actually paid a round-trip for.
             seen = {p.id for p in persons}
             live_ids = [
-                s_["person_id"] for s_ in suggestions if s_.get("person_id")
+                s_["person_id"]
+                for s_ in suggestions + replayed
+                if s_.get("person_id")
             ]
             if live_ids:
                 from .models import Person as _Person
