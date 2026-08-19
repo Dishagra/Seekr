@@ -686,3 +686,90 @@ def test_typos_are_corrected_and_reported(session):
     assert parsed.corrections[0]["typed"] == "rustt"
     # and the correction is applied, not just reported
     assert parsed.skill_groups or parsed.organizations
+
+
+def test_filters_match_whole_words_not_substrings(session):
+    """skill=r must not mean "every skill containing the letter r"."""
+    from rip.api import list_persons
+    from rip.ingest import ingest_profile
+    from rip.normalize import EvidenceItem, NormalizedProfile
+
+    def person(name, skill):
+        return NormalizedProfile(
+            source="github", source_type="code", external_id=name.lower().replace(" ", ""),
+            url=f"https://github.com/{name}", raw={"login": name}, name=name,
+            evidence=[EvidenceItem(attribute_type="skill", value=skill,
+                                   url="https://example.test", confidence=0.9)],
+        )
+
+    ingest_profile(session, person("Rae Gopher", "Go"))
+    ingest_profile(session, person("Cass Cognitive", "Cognitive Science"))
+    ingest_profile(session, person("Ari Rlang", "R"))
+
+    def call(**kw):
+        base = dict(q=None, skill=None, organization=None, current_organization=None,
+                    education=None, role=None, country=None, location=None, source=None,
+                    technology=None, min_publications=None, min_citations=None,
+                    min_sources=None, active_since=None, updated_since=None,
+                    has_cv=None, has_email=None, sort="relevance", limit=20, offset=0,
+                    db=session)
+        base.update(kw)
+        return list_persons(**base)
+
+    names = lambda r: {p["canonical_name"] for p in r["results"]}
+    # "go" is a word in "Go", but only a fragment of "Cognitive"
+    assert names(call(skill="go")) == {"Rae Gopher"}
+    # a single letter is a real skill (the R language) and nothing else
+    assert names(call(skill="r")) == {"Ari Rlang"}
+    # the loose form is still available on request
+    assert "Cass Cognitive" in names(call(skill="co*"))
+
+
+def test_empty_filters_say_which_one_to_relax(session):
+    """Five filters and zero results is useless without knowing which to drop."""
+    from rip.api import list_persons
+    from rip.ingest import ingest_profile
+    from rip.normalize import EvidenceItem, NormalizedProfile
+
+    def person(login, name, country, skill):
+        return NormalizedProfile(
+            source="github", source_type="code", external_id=login,
+            url=f"https://github.com/{login}", raw={}, name=name, country=country,
+            evidence=[EvidenceItem(attribute_type="skill", value=skill,
+                                   url="https://example.test", confidence=0.9)],
+        )
+
+    ingest_profile(session, person("gopher", "Rae Gopher", "IN", "Go"))
+    # someone in DE, but writing Haskell: each filter matches, the pair does not
+    ingest_profile(session, person("haskeller", "Ada Berlin", "DE", "Haskell"))
+
+    def call(**kw):
+        base = dict(q=None, skill=None, organization=None, current_organization=None,
+                    education=None, role=None, country=None, location=None, source=None,
+                    technology=None, min_publications=None, min_citations=None,
+                    min_sources=None, active_since=None, updated_since=None,
+                    has_cv=None, has_email=None, sort="relevance", limit=5, offset=0,
+                    db=session)
+        base.update(kw)
+        return list_persons(**base)
+
+    assert call(skill="Go")["total_matches"] == 1
+    # each filter works alone; together they match nobody
+    out = call(skill="Go", country="DE")
+    assert out["total_matches"] == 0
+    why = out["empty_reason"]
+    # dropping either one leaves exactly one person, and both are offered
+    assert {b["filter"] for b in why["relaxing"]} == {"country", "skill"}
+    assert all(b["without_it"] == 1 for b in why["relaxing"])
+    assert {a["filter"]: a["matches"] for a in why["each_filter_alone"]} == {
+        "skill": 1, "country": 1,
+    }
+
+    # a filter that matches nothing at all is named directly
+    out = call(skill="Nonexistent", country="IN")
+    assert "Nonexistent" in out["empty_reason"]["message"]
+
+    # and diagnosing must not recurse forever when every subset is empty
+    out = call(skill="Nonexistent", country="ZZ", role="Nobody")
+    assert out["total_matches"] == 0
+    assert out["empty_reason"]["message"]

@@ -516,6 +516,37 @@ def _nearest_name(session: Session, token: str) -> str | None:
     return None
 
 
+def names_for_country(code: str) -> list[str]:
+    """Every way a location string might spell this country."""
+    code = (code or "").upper()
+    return sorted(
+        {name for name, iso in COUNTRIES.items() if iso == code}
+        | {name for name, iso in DEMONYMS.items() if iso == code}
+    )
+
+
+def country_from_location(text: str | None) -> str | None:
+    """The ISO-2 country named in a free-text location, if any.
+
+    "Bangalore, India" and "Reading, United Kingdom" state their country
+    plainly; without this they are unreachable by a country filter, which is
+    why searching Go developers in IN returned nobody while the Go developers
+    were sitting there with location "Bangalore, India". Bare city names are
+    deliberately NOT guessed — "Stanford" is a university, not a place we can
+    resolve to a country on our own.
+    """
+    if not text:
+        return None
+    words = [w.strip(" .,()") for w in re.split(r"[,/|]| - ", text.lower())]
+    for part in reversed(words):          # the country is usually written last
+        part = part.strip()
+        if part in COUNTRIES:
+            return COUNTRIES[part]
+        if part in DEMONYMS:
+            return DEMONYMS[part]
+    return None
+
+
 def _could_be_a_name(token: str) -> bool:
     """Could this word be part of a person's name, rather than a technology?
 

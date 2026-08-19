@@ -170,6 +170,13 @@ input.search:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3p
   background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm);
 }
 .fgrid input:focus, .fgrid select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+.whylist{list-style:none; margin:12px 0 0; padding:0; display:flex; gap:6px;
+  flex-wrap:wrap; justify-content:center; font-size:12px; color:var(--muted)}
+.whylist li{border:1px solid var(--line); border-radius:6px; padding:3px 8px}
+.whylist code{font-size:11px; color:var(--ink2)}
+.fhint{grid-column:1/-1; margin:2px 0 0; font-size:12px; color:var(--faint)}
+.fhint code{background:var(--surface); border:1px solid var(--line); border-radius:4px;
+  padding:0 4px; font-size:11px}
 .filter-actions{display:flex; gap:8px; padding:0 14px 14px}
 
 /* ---------- results ---------- */
@@ -507,6 +514,9 @@ async function renderSearch(){
         <label class="chk"><input type="checkbox" id="f_cv"> Has CV</label>
         <label class="chk"><input type="checkbox" id="f_email"> Has email</label>
       </div>
+      <p class="fhint">Text filters match whole words — <code>go</code> finds Go,
+        not Cognitive. Add <code>*</code> for a loose match: <code>go*</code>
+        also finds Golang.</p>
       <div class="filter-actions">
         <button class="btn primary" onclick="runFilters()">Apply filters</button>
         <button class="btn" onclick="clearFilters()">Clear</button>
@@ -540,6 +550,26 @@ async function loadFacets(){
       const el = $("#"+id); if(!el) continue;
       el.innerHTML = `<option value="">Any</option>` + d.values.map(v=>
         `<option value="${esc(v.value)}">${esc(v.value)} · ${fmt(v.people)}</option>`).join("");
+    }catch(e){}
+  }
+  // Free-text filters now match whole words, so a guessed fragment finds
+  // nothing. Offer the values that actually exist, with their people-counts,
+  // instead of making people guess at the vocabulary.
+  for(const [id, field] of [["f_org","organization"],["f_curorg","organization"],
+                            ["f_edu","organization"],["f_role","role"],
+                            ["f_skill","skill"],["f_tech","skill"]]){
+    const el = $("#"+id); if(!el) continue;
+    const listId = id+"_list";
+    el.setAttribute("list", listId);
+    if(!$("#"+listId)){
+      const dl = document.createElement("datalist");
+      dl.id = listId;
+      el.parentElement.appendChild(dl);
+    }
+    try{
+      const d = await api("/v1/facets?field="+field+"&limit=150");
+      $("#"+listId).innerHTML = d.values.map(v=>
+        `<option value="${esc(v.value)}">${fmt(v.people)} people</option>`).join("");
     }catch(e){}
   }
 }
@@ -584,8 +614,11 @@ async function runQuery(discover, offset){
 async function runFilters(offset){
   syncFilterCount();
   const params = filterParams();
+  // The search box holds a question; on this endpoint `q` is a NAME filter.
+  // Sending a whole sentence there matches nobody and silently empties the
+  // result, so only a short, name-shaped value is passed through.
   const q = $("#q").value.trim();
-  if(q) params.set("q", q);
+  if(q && q.split(/\s+/).length <= 3) params.set("q", q);
   const paging = typeof offset === "number" && offset > 0;
   if(!paging){ PAGE = {mode:"filters", q, offset:0, rows:[]}; busy("Filtering…"); }
   if(paging) params.set("offset", offset);
@@ -708,9 +741,18 @@ function renderResults(data, opts={}){
       !opts.discover ? `<button class="btn primary" onclick="runQuery('true')">Search live sources</button>` : "");
   } else if(!sugg.length){
     const why = data.empty_reason;
+    // With filters, show how each one does on its own — that is what tells
+    // you which one to relax.
+    const perFilter = (why && why.each_filter_alone || []).length
+      ? `<ul class="whylist">` + why.each_filter_alone.map(a=>
+          `<li><code>${esc(a.filter)}${a.value===true?"":"="+esc(String(a.value))}</code>
+           ${a.matches===null?"—":fmt(a.matches)+" on its own"}</li>`).join("") + `</ul>`
+      : "";
     main = emptyState("No matches",
       why ? why.message : "No one in the corpus matches these filters.",
-      !opts.discover ? `<button class="btn primary" onclick="runQuery('true')">Search live sources</button>` : "");
+      (!opts.discover && !opts.filtered)
+        ? `<button class="btn primary" onclick="runQuery('true')">Search paid sources too</button>` : "",
+      perFilter);
   } else { main = ""; }
 
   $("#results").innerHTML = `
@@ -720,10 +762,11 @@ function renderResults(data, opts={}){
     </div>
     ${corrBanner}${roBanner}${unmatchedBanner}${main}${suggBlock}`;
 }
-function emptyState(title, body, action){
+function emptyState(title, body, action, extraHtml){
+  // body is escaped; extraHtml is markup we built ourselves
   return `<div class="card"><div class="empty">
     <div class="icon">${ICON.empty}</div>
-    <h3>${esc(title)}</h3><p>${esc(body)}</p>${action||""}
+    <h3>${esc(title)}</h3><p>${esc(body)}</p>${extraHtml||""}${action||""}
   </div></div>`;
 }
 // Feedback is recorded against the query it was judged on. It is NOT used to

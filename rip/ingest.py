@@ -298,6 +298,10 @@ def ingest_profile(session: Session, profile: NormalizedProfile) -> Person:
     # person scalar fields (fill blanks, log conflicts)
     _set_person_field(session, person, "canonical_name", profile.name, record)
     _set_person_field(session, person, "location", profile.location, record)
+    # Only what the source actually stated. A country inferred from the
+    # location text is not a claim any source made, and storing it here would
+    # invent provenance and manufacture conflicts between sources. The country
+    # filter reads the location itself instead.
     _set_person_field(session, person, "country", profile.country, record)
     _set_person_field(session, person, "summary", profile.summary, record)
 

@@ -245,7 +245,10 @@ def test_person_queries_avoid_distinct_on_json(session):
 
     assert call(q="jane")["count"] == 1
     assert call(skill="Rust")["count"] == 1
-    assert call(organization="Acme")["count"] == 1
+    # the fixture org is "AcmeAI", one word: "Acme" is a prefix, not a word,
+    # so it needs the explicit loose form
+    assert call(organization="AcmeAI")["count"] == 1
+    assert call(organization="Acme*")["count"] == 1
     assert len(execute(session, parse(session, "rust"))) == 1
 
     # and the SQL they emit de-duplicates on the id column, never whole rows

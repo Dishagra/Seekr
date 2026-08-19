@@ -6,9 +6,11 @@ full provenance, and a /changes feed for incremental sync.
 
 from datetime import datetime
 
+import contextvars
+
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import String as SAString
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .db import READ_ONLY, SessionLocal, init_db
@@ -124,6 +126,42 @@ def root():
     }
 
 
+
+# Characters that end a word in the values we store: "Go, Python", "C/C++",
+# "Machine Learning (Applied)", "Bangalore - Karnataka".
+_WORD_EDGES = ",;/|()[]{}\"'-\u2013\u2014:.\t\n"
+
+
+def _word_match(column, value: str):
+    """Match VALUE as a whole word or phrase inside COLUMN.
+
+    A plain substring filter is close to useless at this scale: skill=r
+    matched 49,239 of 50,733 people because nearly every skill contains the
+    letter r, and skill=go reached Hinton through "Cognitive".
+
+    Every separator is rewritten to a space and both sides are padded, so one
+    LIKE can ask for " go " and mean the word. A trailing * asks for the loose
+    behaviour back: skill=go* still matches "Golang". LIKE rather than a regex
+    so the same clause runs on SQLite and Postgres.
+    """
+    from sqlalchemy import literal
+
+    v = " ".join((value or "").strip().lower().split())
+    if not v:
+        return column.isnot(None)
+    if v.endswith("*"):
+        stem = v[:-1].strip()
+        if not stem:
+            return column.isnot(None)
+        return func.lower(column).like(f"%{stem}%")
+
+    normalized = func.lower(column)
+    for sep in _WORD_EDGES:
+        normalized = func.replace(normalized, sep, " ")
+    padded = literal(" ").concat(normalized).concat(literal(" "))
+    return padded.like(f"% {v} %")
+
+
 @app.get("/v1/persons")
 def list_persons(
     q: str | None = Query(None, description="name / alias substring"),
@@ -159,16 +197,15 @@ def list_persons(
     stmt = select(Person).where(Person.merged_into.is_(None))
 
     if q:
-        pattern = f"%{q.lower()}%"
         stmt = stmt.where(
-            func.lower(Person.canonical_name).like(pattern)
-            | func.lower(func.cast(Person.aliases, SAString)).like(pattern)
+            _word_match(Person.canonical_name, q)
+            | func.lower(func.cast(Person.aliases, SAString)).like(f'%"{q.lower()}%')
         )
     if skill:
         stmt = stmt.where(sa_exists().where(and_(
             Evidence.person_id == Person.id,
             Evidence.attribute_type.in_(["skill", "research_interest", "specialization"]),
-            func.lower(Evidence.value).like(f"%{skill.lower()}%"),
+            _word_match(Evidence.value, skill),
         )))
     for value, relation in ((organization, None), (education, "studied_at")):
         if not value:
@@ -176,28 +213,33 @@ def list_persons(
         conds = [
             Affiliation.person_id == Person.id,
             Organization.id == Affiliation.organization_id,
-            func.lower(Organization.name).like(f"%{value.lower()}%"),
+            _word_match(Organization.name, value),
         ]
         if relation:
             conds.append(Affiliation.relation == relation)
         stmt = stmt.where(sa_exists().where(and_(*conds)))
     if current_organization:
-        stmt = stmt.where(
-            func.lower(Person.current_organization).like(f"%{current_organization.lower()}%")
-        )
+        stmt = stmt.where(_word_match(Person.current_organization, current_organization))
     if role:
-        pattern = f"%{role.lower()}%"
         stmt = stmt.where(
-            func.lower(Person.current_role).like(pattern)
+            _word_match(Person.current_role, role)
             | sa_exists().where(and_(
                 Affiliation.person_id == Person.id,
-                func.lower(Affiliation.role).like(pattern),
+                _word_match(Affiliation.role, role),
             ))
         )
     if country:
-        stmt = stmt.where(func.upper(Person.country) == country.upper())
+        # A stated country, or a location that names it. Without the second
+        # half, country=IN missed every GitHub developer whose location reads
+        # "Bangalore, India" — the source gave a place, not an ISO code.
+        from .nlq import names_for_country
+
+        clauses = [func.upper(Person.country) == country.upper()]
+        for name in names_for_country(country):
+            clauses.append(_word_match(Person.location, name))
+        stmt = stmt.where(or_(*clauses))
     if location:
-        stmt = stmt.where(func.lower(Person.location).like(f"%{location.lower()}%"))
+        stmt = stmt.where(_word_match(Person.location, location))
     if source:
         stmt = stmt.where(sa_exists().where(and_(
             IdentityLink.person_id == Person.id,
@@ -208,7 +250,7 @@ def list_persons(
         stmt = stmt.where(sa_exists().where(and_(
             Contribution.person_id == Person.id,
             Project.id == Contribution.project_id,
-            func.lower(func.cast(Project.technologies, SAString)).like(f"%{technology.lower()}%"),
+            _word_match(func.cast(Project.technologies, SAString), technology),
         )))
     if has_cv is not None:
         cv = sa_exists().where(and_(
@@ -267,13 +309,88 @@ def list_persons(
         select(Person).where(Person.id.in_(ids))).scalars()} if ids else {}
     persons = [rows[i] for i in ids if i in rows]
 
-    return {
+    response = {
         "count": len(persons),
         "total_matches": total,
         "has_more": offset + len(persons) < total,
         "next_offset": offset + len(persons) if offset + len(persons) < total else None,
         "results": [_person_summary(p) for p in persons],
     }
+    if total == 0 and not _DIAGNOSING.get():
+        # Which filter emptied it? Combining five filters and getting nothing
+        # says nothing about which one to relax, so each is measured on its
+        # own and each is also dropped in turn.
+        active = {
+            "q": q, "skill": skill, "organization": organization,
+            "current_organization": current_organization, "education": education,
+            "role": role, "country": country, "location": location,
+            "source": source, "technology": technology,
+            "min_publications": min_publications, "min_citations": min_citations,
+            "min_sources": min_sources, "active_since": active_since,
+            "updated_since": updated_since, "has_cv": has_cv, "has_email": has_email,
+        }
+        active = {k: v for k, v in active.items() if v is not None and v != ""}
+
+        def _count(subset: dict) -> int | None:
+            reset = _DIAGNOSING.set(True)
+            try:
+                return list_persons(
+                    **{**_ALL_FILTERS_NONE, **subset, "db": db}
+                )["total_matches"]
+            except Exception:
+                return None
+            finally:
+                _DIAGNOSING.reset(reset)
+
+        alone, blockers = [], []
+        for name, value in active.items():
+            on_its_own = _count({name: value})
+            alone.append({"filter": name, "value": value, "matches": on_its_own})
+            if on_its_own == 0:
+                continue
+            if len(active) > 1:
+                without = _count({k: v for k, v in active.items() if k != name})
+                if without:
+                    blockers.append({"filter": name, "value": value, "without_it": without})
+
+        dead = [a for a in alone if a["matches"] == 0]
+        if dead:
+            message = "Nothing matches " + ", ".join(
+                f"{a['filter']}={a['value']}" for a in dead
+            ) + " at all — check the spelling, or add * for a loose match."
+        elif blockers:
+            message = "No one matches every filter at once. " + "; ".join(
+                f"dropping {b['filter']} would return {b['without_it']:,}" for b in blockers
+            )
+        else:
+            message = (
+                "Each filter matches people on its own, but no one satisfies them "
+                "all — at least two have to be relaxed."
+            )
+        response["empty_reason"] = {
+            "message": message,
+            "each_filter_alone": alone,
+            "relaxing": blockers,
+        }
+    return response
+
+
+# The diagnostic below re-runs list_persons with fewer filters, and those runs
+# can be empty too. Without this guard each one would diagnose itself and the
+# recursion never bottoms out. A ContextVar rather than a plain flag so
+# concurrent requests do not switch each other's diagnostics off.
+_DIAGNOSING = contextvars.ContextVar("rip_diagnosing", default=False)
+
+
+# every filter name defaulted to None, so a diagnostic call can pass a subset
+_ALL_FILTERS_NONE = {
+    "q": None, "skill": None, "organization": None, "current_organization": None,
+    "education": None, "role": None, "country": None, "location": None,
+    "source": None, "technology": None, "min_publications": None,
+    "min_citations": None, "min_sources": None, "active_since": None,
+    "updated_since": None, "has_cv": None, "has_email": None,
+    "sort": "relevance", "limit": 1, "offset": 0,
+}
 
 
 @app.get("/v1/facets")
