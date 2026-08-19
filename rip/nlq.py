@@ -775,10 +775,35 @@ def _always_run(source: str) -> bool:
     return source == "github"
 
 
+# When GitHub's hourly budget runs out, every further fetch is a wasted
+# round-trip. Remember that until the quota resets rather than rediscovering
+# it once per person.
+_GITHUB_BLOCKED_UNTIL = 0.0
+
+
+def _github_throttled() -> bool:
+    import time
+
+    return time.time() < _GITHUB_BLOCKED_UNTIL
+
+
+def _note_github_throttled(seconds: float = 900.0) -> None:
+    global _GITHUB_BLOCKED_UNTIL
+    import time
+
+    _GITHUB_BLOCKED_UNTIL = time.time() + seconds
+    logger.warning(
+        "GitHub rate limit reached (60/hour unauthenticated); "
+        "set GITHUB_TOKEN to raise it to 5000/hour"
+    )
+
+
 def _may_fetch_github(stored_so_far: int) -> bool:
     """With a token, always. Without one, only when nothing else answered."""
     import os
 
+    if _github_throttled():
+        return False
     return bool(os.environ.get("GITHUB_TOKEN")) or stored_so_far == 0
 MIN_USEFUL_SUGGESTIONS = 3
 # providers that bill per call
@@ -930,6 +955,8 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
             try:
                 return item, get_connector(item["source"]).fetch(item["external_id"]), None
             except Exception as exc:
+                if item.get("source") == "github" and "rate limit" in str(exc).lower():
+                    _note_github_throttled()
                 return item, None, exc
 
         with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
