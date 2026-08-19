@@ -1,9 +1,8 @@
-"""Internal exploration UI, served at /ui.
+"""Seekr's internal exploration UI, served at /ui.
 
-One self-contained page (hash-routed) in the style of an archival card
-catalog / research dossier. Talks to the /v1 API with a bearer token the
-operator pastes once (stored in localStorage). Exploration and debugging
-only — no ranking anywhere.
+One self-contained page (hash-routed). Talks to the /v1 API with a bearer
+token the operator pastes once and we keep in localStorage. Exploration,
+review and debugging only — no ranking anywhere.
 """
 
 UI_HTML = r"""<!doctype html>
@@ -14,612 +13,885 @@ UI_HTML = r"""<!doctype html>
 <title>Seekr</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
-  --paper:#f6f2e8; --paper2:#efe9db; --ink:#231f18; --faint:#8c8272;
-  --rule:#d8cfba; --accent:#8a2f1d; --accent2:#274156; --ok:#3d6b35;
-  --stamp:#8a2f1d; --card:#fbf8f0;
+  --bg:#fbfbfd; --surface:#ffffff; --surface2:#f5f6f8; --raised:#ffffff;
+  --ink:#15171c; --ink2:#3d434e; --muted:#6b7280; --faint:#9aa1ad;
+  --line:#e5e7ec; --line2:#eef0f4;
+  --accent:#3b4ce8; --accent-ink:#ffffff; --accent-soft:#eef0fe;
+  --ok:#16794c; --ok-soft:#e7f5ee;
+  --warn:#a65b00; --warn-soft:#fdf1e3;
+  --danger:#c2255c; --danger-soft:#fdecf2;
+  --shadow:0 1px 2px rgba(16,18,24,.04), 0 4px 12px rgba(16,18,24,.05);
+  --radius:8px; --radius-sm:6px;
+  --sans:"Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-*{box-sizing:border-box;margin:0;padding:0}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0b0c0f; --surface:#141619; --surface2:#1b1e23; --raised:#181b1f;
+    --ink:#e9ebef; --ink2:#c3c8d0; --muted:#8b919c; --faint:#6a707b;
+    --line:#252932; --line2:#1f232a;
+    --accent:#7b8bff; --accent-ink:#0b0c0f; --accent-soft:#1a1e33;
+    --ok:#4ade80; --ok-soft:#132318;
+    --warn:#fbbf24; --warn-soft:#251c0d;
+    --danger:#fb7185; --danger-soft:#2a1119;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.28);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0b0c0f; --surface:#141619; --surface2:#1b1e23; --raised:#181b1f;
+  --ink:#e9ebef; --ink2:#c3c8d0; --muted:#8b919c; --faint:#6a707b;
+  --line:#252932; --line2:#1f232a;
+  --accent:#7b8bff; --accent-ink:#0b0c0f; --accent-soft:#1a1e33;
+  --ok:#4ade80; --ok-soft:#132318;
+  --warn:#fbbf24; --warn-soft:#251c0d;
+  --danger:#fb7185; --danger-soft:#2a1119;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box; margin:0; padding:0}
+html{-webkit-text-size-adjust:100%}
 body{
-  background:var(--paper); color:var(--ink);
-  font-family:"IBM Plex Mono",monospace; font-size:14px; line-height:1.55;
-  background-image:radial-gradient(ellipse at 20% -10%, rgba(138,47,29,.05), transparent 50%),
-    repeating-linear-gradient(0deg, transparent 0 31px, rgba(140,130,114,.07) 31px 32px);
-  min-height:100vh;
+  background:var(--bg); color:var(--ink); font-family:var(--sans);
+  font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
 }
-a{color:var(--accent2)}
-header{
-  border-bottom:3px double var(--rule); padding:26px 32px 18px;
-  display:flex; align-items:baseline; gap:24px; flex-wrap:wrap;
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+button{font:inherit; cursor:pointer}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
+@media (prefers-reduced-motion:reduce){ *{animation:none !important; transition:none !important} }
+
+/* ---------- shell ---------- */
+.shell{display:grid; grid-template-columns:236px 1fr; min-height:100vh}
+.rail{
+  border-right:1px solid var(--line); background:var(--surface);
+  display:flex; flex-direction:column; position:sticky; top:0; height:100vh;
 }
-header h1{
-  font-family:"Fraunces",serif; font-weight:900; font-size:30px; letter-spacing:-.5px;
+.brand{display:flex; align-items:center; gap:9px; padding:20px 18px 18px}
+.brand .mark{
+  width:26px; height:26px; border-radius:7px; background:var(--ink);
+  display:grid; place-items:center; flex:none;
 }
-header h1 .no{color:var(--accent); font-size:16px; vertical-align:super; margin-left:4px}
-nav{display:flex; gap:2px; margin-left:auto}
+.brand .mark svg{stroke:var(--bg)}
+.brand b{font-size:16px; font-weight:600; letter-spacing:-.02em}
+.brand span{font-size:11px; color:var(--faint); display:block; letter-spacing:.02em; margin-top:-2px}
+nav{display:flex; flex-direction:column; gap:1px; padding:6px 10px}
 nav a{
-  text-decoration:none; color:var(--ink); padding:6px 14px; font-size:12px;
-  text-transform:uppercase; letter-spacing:.12em; border:1px solid transparent;
+  display:flex; align-items:center; gap:9px; padding:7px 10px; border-radius:var(--radius-sm);
+  color:var(--ink2); font-size:13.5px; font-weight:500; transition:background .12s, color .12s;
 }
-nav a.active{border:1px solid var(--ink); background:var(--card); box-shadow:2px 2px 0 var(--rule)}
-main{max-width:1060px; margin:0 auto; padding:34px 32px 90px}
-.tagline{color:var(--faint); font-size:12px; letter-spacing:.08em; text-transform:uppercase}
+nav a:hover{background:var(--surface2); text-decoration:none; color:var(--ink)}
+nav a.active{background:var(--accent-soft); color:var(--accent)}
+nav a svg{flex:none; opacity:.85}
+.rail-foot{margin-top:auto; padding:14px 16px; border-top:1px solid var(--line2); font-size:11.5px; color:var(--faint)}
+.rail-foot .stat{display:flex; justify-content:space-between; padding:2px 0; font-variant-numeric:tabular-nums}
+.rail-foot .stat b{color:var(--ink2); font-weight:500}
+.themebtn{
+  margin-top:10px; width:100%; border:1px solid var(--line); background:var(--surface);
+  color:var(--muted); border-radius:var(--radius-sm); padding:5px; font-size:11.5px;
+}
+.themebtn:hover{background:var(--surface2); color:var(--ink)}
 
-/* search */
-.searchbar{display:flex; gap:0; margin:8px 0 10px}
-.searchbar input{
-  flex:1; font:inherit; padding:13px 16px; background:var(--card); color:var(--ink);
-  border:1.5px solid var(--ink); border-right:none; outline:none;
+main{min-width:0; display:flex; flex-direction:column}
+.topbar{
+  position:sticky; top:0; z-index:20; background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:blur(8px); border-bottom:1px solid var(--line); padding:14px 28px;
 }
-.searchbar input:focus{box-shadow:3px 3px 0 var(--rule)}
-.searchbar button{
-  font:inherit; font-weight:600; letter-spacing:.1em; text-transform:uppercase; font-size:12px;
-  padding:0 22px; background:var(--ink); color:var(--paper); border:1.5px solid var(--ink); cursor:pointer;
-}
-.searchbar button:hover{background:var(--accent)}
-.searchbar button.live{background:var(--card); color:var(--ink); border-left:none}
-.searchbar button.live:hover{background:var(--accent2); color:var(--paper)}
-.hints{color:var(--faint); font-size:12px; margin-bottom:22px}
-.hints code{cursor:pointer; text-decoration:underline dotted; margin-right:12px}
-.filterline{margin:14px 0 4px; font-size:12px}
-.chip{
-  display:inline-block; border:1px solid var(--ink); background:var(--card);
-  padding:1px 9px; margin:2px 6px 2px 0; font-size:11px;
-}
-.chip b{color:var(--accent); font-weight:500; text-transform:uppercase; font-size:9px; letter-spacing:.1em; margin-right:5px}
-.warn{color:var(--accent); font-size:12px; margin:6px 0 0}
+.page{padding:24px 28px 80px; max-width:1180px; width:100%}
+h1.title{font-size:19px; font-weight:600; letter-spacing:-.02em}
+.sub{color:var(--muted); font-size:13px; margin-top:2px}
 
-/* results list */
-.results{margin-top:22px; background:var(--card); border:1px solid var(--ink); box-shadow:3px 3px 0 var(--rule)}
-table.list{width:100%; border-collapse:collapse; font-size:13px}
+/* ---------- search ---------- */
+.searchrow{display:flex; gap:8px; align-items:center}
+.searchwrap{position:relative; flex:1}
+.searchwrap svg{position:absolute; left:12px; top:50%; transform:translateY(-50%); stroke:var(--faint)}
+input.search{
+  width:100%; font:inherit; font-size:14px; padding:10px 82px 10px 36px; color:var(--ink);
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+  transition:border-color .12s, box-shadow .12s;
+}
+input.search::placeholder{color:var(--faint)}
+input.search:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+.kbd{
+  position:absolute; right:10px; top:50%; transform:translateY(-50%);
+  font-family:var(--mono); font-size:10.5px; color:var(--faint);
+  border:1px solid var(--line); border-radius:4px; padding:2px 5px; background:var(--surface2);
+}
+.btn{
+  border:1px solid var(--line); background:var(--surface); color:var(--ink);
+  border-radius:var(--radius-sm); padding:8px 13px; font-size:13px; font-weight:500;
+  transition:background .12s, border-color .12s;
+}
+.btn:hover{background:var(--surface2)}
+.btn.primary{background:var(--ink); color:var(--bg); border-color:var(--ink)}
+.btn.primary:hover{opacity:.88}
+.btn.sm{padding:4px 9px; font-size:12px}
+.btn.danger{color:var(--danger); border-color:color-mix(in srgb, var(--danger) 30%, var(--line))}
+.btn.danger:hover{background:var(--danger-soft)}
+.btn:disabled{opacity:.5; cursor:default}
+.btn-row{display:flex; gap:6px; flex-wrap:wrap}
+
+.examples{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; align-items:center}
+.examples em{color:var(--faint); font-style:normal; font-size:12px; margin-right:2px}
+.chipbtn{
+  border:1px solid var(--line); background:var(--surface); color:var(--ink2);
+  border-radius:99px; padding:3px 11px; font-size:12px;
+}
+.chipbtn:hover{border-color:var(--accent); color:var(--accent); background:var(--accent-soft)}
+
+/* ---------- filters ---------- */
+.filters{margin-top:14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface)}
+.filters summary{
+  list-style:none; cursor:pointer; padding:10px 14px; font-size:13px; font-weight:500;
+  display:flex; align-items:center; gap:8px; color:var(--ink2);
+}
+.filters summary::-webkit-details-marker{display:none}
+.filters summary .caret{transition:transform .15s}
+.filters[open] summary .caret{transform:rotate(90deg)}
+.filters summary .count{
+  background:var(--accent); color:var(--accent-ink); border-radius:99px;
+  font-size:10.5px; padding:1px 7px; font-variant-numeric:tabular-nums;
+}
+.fgrid{
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px 14px;
+  padding:4px 14px 14px; border-top:1px solid var(--line2);
+}
+.fgrid label{display:flex; flex-direction:column; gap:4px; font-size:11.5px; color:var(--muted); font-weight:500}
+.fgrid label.chk{flex-direction:row; align-items:center; gap:7px; font-size:13px; color:var(--ink2); padding-top:18px}
+.fgrid input, .fgrid select{
+  font:inherit; font-size:13px; padding:6px 8px; color:var(--ink);
+  background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm);
+}
+.fgrid input:focus, .fgrid select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+.filter-actions{display:flex; gap:8px; padding:0 14px 14px}
+
+/* ---------- results ---------- */
+.meta{display:flex; align-items:center; justify-content:space-between; gap:12px; margin:20px 0 10px; flex-wrap:wrap}
+.count{font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums}
+.count b{color:var(--ink); font-weight:600}
+.pills{display:flex; gap:5px; flex-wrap:wrap}
+.pill{
+  display:inline-flex; align-items:center; gap:5px; font-size:11.5px; padding:2px 9px;
+  border-radius:99px; background:var(--surface2); color:var(--ink2); border:1px solid var(--line2);
+}
+.pill b{color:var(--muted); font-weight:500; font-size:10px; text-transform:uppercase; letter-spacing:.04em}
+.pill.warn{background:var(--warn-soft); color:var(--warn); border-color:transparent}
+
+.card{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden}
+.tablewrap{overflow-x:auto}
+table.list{width:100%; border-collapse:collapse; font-size:13.5px}
 table.list thead th{
-  font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint);
-  font-weight:500; text-align:left; padding:10px 14px; border-bottom:1.5px solid var(--ink);
-  background:var(--paper2); position:sticky; top:0;
+  text-align:left; font-size:11px; font-weight:600; color:var(--muted); letter-spacing:.03em;
+  text-transform:uppercase; padding:9px 16px; background:var(--surface2);
+  border-bottom:1px solid var(--line); position:sticky; top:0; white-space:nowrap;
 }
-table.list td{padding:9px 14px; border-top:1px solid var(--rule); vertical-align:top}
-table.list tbody tr{cursor:pointer}
-table.list tbody tr:hover{background:var(--paper2)}
-table.list tbody tr:hover td.nm{color:var(--accent)}
-td.nm{font-family:"Fraunces",serif; font-weight:600; font-size:15px; white-space:nowrap}
-td.org, td.loc{color:var(--ink)}
-td.sk{color:var(--accent2); font-size:12px}
-td.src{font-size:10px; letter-spacing:.06em; color:var(--faint); text-transform:uppercase; white-space:nowrap}
-td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--faint); font-size:12px}
+table.list td{padding:11px 16px; border-top:1px solid var(--line2); vertical-align:top}
+table.list tbody tr{cursor:pointer; transition:background .1s}
+table.list tbody tr:hover{background:var(--surface2)}
+table.list tbody tr:first-child td{border-top:none}
+td.nm{font-weight:600; color:var(--ink); white-space:nowrap}
+td.nm .id{display:block; font-family:var(--mono); font-size:10.5px; color:var(--faint); font-weight:400; margin-top:1px}
+td.org{color:var(--ink2)}
+td.org .sub2{font-size:11.5px; color:var(--faint); margin-top:2px}
+td.sk{color:var(--muted); font-size:12.5px; max-width:340px}
+td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
+.srcpill{
+  display:inline-block; font-family:var(--mono); font-size:10px; padding:1px 6px; margin:1px 3px 1px 0;
+  border-radius:4px; background:var(--surface2); color:var(--muted); border:1px solid var(--line2);
+}
 .muted{color:var(--faint)}
-.sub{font-size:10.5px; color:var(--faint); margin-top:2px}
-.filters{border:1px solid var(--rule); background:var(--card); padding:10px 14px; margin-bottom:6px}
-.filters summary{cursor:pointer; font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent)}
-.fgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px 14px; margin-top:12px}
-.fgrid label{display:flex; flex-direction:column; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); gap:3px}
-.fgrid label.chk{flex-direction:row; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font-size:12px; color:var(--ink)}
-.fgrid input, .fgrid select{font:inherit; font-size:12.5px; padding:5px 7px; border:1px solid var(--rule); background:var(--paper); color:var(--ink)}
-.fgrid input:focus, .fgrid select:focus{outline:none; border-color:var(--ink)}
-.resultcount{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); margin:16px 0 0}
+.loadmore{padding:12px; text-align:center; border-top:1px solid var(--line2)}
 
-/* dossier */
-.dossier{background:var(--card); border:1px solid var(--ink); box-shadow:4px 4px 0 var(--rule); padding:30px 34px}
-.dossier h2{font-family:"Fraunces",serif; font-weight:900; font-size:34px; letter-spacing:-.5px}
-.dossier .aka{color:var(--faint); font-size:12px; margin:2px 0 4px}
-.dossier .meta{font-size:12px; color:var(--faint); margin-bottom:4px}
-.stamp{
-  display:inline-block; border:2px solid var(--stamp); color:var(--stamp); border-radius:3px;
-  padding:1px 8px; font-size:10px; font-weight:600; letter-spacing:.18em; text-transform:uppercase;
-  transform:rotate(-2deg); margin-left:10px; vertical-align:middle; opacity:.85;
+/* ---------- states ---------- */
+.empty{padding:56px 24px; text-align:center}
+.empty .icon{width:38px; height:38px; margin:0 auto 12px; display:grid; place-items:center;
+  border-radius:10px; background:var(--surface2); color:var(--faint)}
+.empty h3{font-size:15px; font-weight:600; margin-bottom:4px}
+.empty p{color:var(--muted); font-size:13px; max-width:420px; margin:0 auto 14px}
+.loading{padding:44px; text-align:center; color:var(--muted); font-size:13px}
+.spinner{
+  width:18px; height:18px; border:2px solid var(--line); border-top-color:var(--accent);
+  border-radius:50%; animation:spin .7s linear infinite; margin:0 auto 10px;
 }
-.stamp.ok{border-color:var(--ok); color:var(--ok)}
-section.block{margin-top:30px}
-section.block>h4{
-  font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:var(--accent);
-  border-bottom:1px solid var(--rule); padding-bottom:5px; margin-bottom:12px;
+@keyframes spin{to{transform:rotate(360deg)}}
+.banner{
+  padding:10px 14px; border-radius:var(--radius-sm); font-size:13px; margin-bottom:14px;
+  background:var(--danger-soft); color:var(--danger); border:1px solid transparent;
 }
-table{width:100%; border-collapse:collapse; font-size:12.5px}
-th{
-  text-align:left; font-size:10px; letter-spacing:.15em; text-transform:uppercase;
-  color:var(--faint); font-weight:500; padding:4px 10px 4px 0;
+.banner.info{background:var(--accent-soft); color:var(--accent)}
+
+/* ---------- person ---------- */
+.phead{display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:6px}
+.phead h1{font-size:26px; font-weight:600; letter-spacing:-.025em; line-height:1.2}
+.phead .role{color:var(--muted); font-size:14px; margin-top:3px}
+.badges{display:flex; gap:6px; flex-wrap:wrap; margin-top:8px}
+.badge{
+  font-size:11px; font-weight:500; padding:2px 9px; border-radius:99px;
+  background:var(--surface2); color:var(--ink2); border:1px solid var(--line2);
 }
-td{padding:5px 10px 5px 0; border-top:1px solid var(--rule); vertical-align:top}
-td.num{font-variant-numeric:tabular-nums; text-align:right; padding-right:18px}
-.vstate{font-size:9px; letter-spacing:.12em; text-transform:uppercase; padding:1px 6px; border:1px solid}
-.vstate.corroborated{color:var(--ok); border-color:var(--ok)}
-.vstate.unverified{color:var(--faint); border-color:var(--faint)}
-.conflict{border:1px solid var(--accent); background:rgba(138,47,29,.04); padding:12px 14px; margin-bottom:10px; font-size:12.5px}
-.conflict .vs{display:grid; grid-template-columns:1fr 30px 1fr; align-items:center; gap:6px}
-.conflict .vs span.v{font-weight:600}
-.conflict .vs .m{text-align:center; color:var(--accent); font-family:"Fraunces",serif; font-style:italic}
-.conflict .src{color:var(--faint); font-size:11px}
-/* network panel */
-.net{border:1px solid var(--rule); background:var(--paper2); position:relative; overflow:hidden}
+.badge.ok{background:var(--ok-soft); color:var(--ok); border-color:transparent}
+.badge.warn{background:var(--warn-soft); color:var(--warn); border-color:transparent}
+.idline{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:8px}
+.idline.aka{font-family:var(--sans); font-size:12px; max-width:720px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.grid2{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; align-items:start}
+section.block{margin-top:20px}
+section.block > h2{
+  font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.05em;
+  color:var(--muted); margin-bottom:9px; display:flex; align-items:center; gap:7px;
+}
+section.block > h2 .n{background:var(--surface2); border-radius:99px; padding:0 7px; font-size:10.5px; color:var(--faint)}
+.card .inner{padding:14px 16px}
+table.data{width:100%; border-collapse:collapse; font-size:13px}
+table.data th{
+  text-align:left; font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
+  color:var(--faint); padding:0 12px 7px 0;
+}
+table.data td{padding:7px 12px 7px 0; border-top:1px solid var(--line2); vertical-align:top}
+table.data tr:first-child td{border-top:none}
+table.data td.num{text-align:right; padding-right:0; font-variant-numeric:tabular-nums}
+.vstate{font-size:10px; padding:1px 7px; border-radius:99px; font-weight:500}
+.vstate.corroborated{background:var(--ok-soft); color:var(--ok)}
+.vstate.unverified{background:var(--surface2); color:var(--faint)}
+.conflict{border:1px solid var(--line); border-left:3px solid var(--warn); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:8px; background:var(--surface)}
+.conflict .ct{font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--warn); font-weight:600; margin-bottom:7px}
+.vs{display:grid; grid-template-columns:1fr auto 1fr; gap:12px; align-items:center}
+.vs .side b{display:block; font-size:13.5px; font-weight:600}
+.vs .side span{font-size:11.5px; color:var(--faint)}
+.vs .mid{color:var(--faint); font-size:11px}
+
+/* ---------- network ---------- */
+.net{border-radius:var(--radius); overflow:hidden; background:var(--surface2); position:relative}
 .net svg{display:block; width:100%; height:auto}
-.net .legend{position:absolute; bottom:6px; right:10px; font-size:10px; color:var(--faint); letter-spacing:.08em}
-.net text{font-family:"IBM Plex Mono",monospace; font-size:9.5px; fill:var(--ink); pointer-events:none}
-.net .edge{stroke:var(--rule); stroke-width:1}
-.net .edge.org{stroke:var(--accent2); stroke-dasharray:3 3}
-.net .n-person{fill:var(--card); stroke:var(--ink); stroke-width:1.2; cursor:pointer}
+.net text{font-family:var(--sans); font-size:9.5px; fill:var(--ink2); pointer-events:none}
+.net .edge{stroke:var(--line); stroke-width:1.2}
+.net .edge.org{stroke:var(--accent); stroke-dasharray:3 3; opacity:.5}
+.net .n-person{fill:var(--surface); stroke:var(--muted); stroke-width:1.4; cursor:pointer; transition:fill .12s}
 .net .n-person:hover{fill:var(--accent); stroke:var(--accent)}
 .net .n-self{fill:var(--ink); stroke:var(--ink)}
-.net .n-org{fill:var(--accent2); stroke:var(--accent2); opacity:.75}
-.btn{
-  font:inherit; font-size:11px; letter-spacing:.1em; text-transform:uppercase; cursor:pointer;
-  border:1px solid var(--ink); background:var(--card); padding:4px 12px; margin-right:8px;
-}
-.btn:hover{background:var(--ink); color:var(--paper)}
-.btn.danger:hover{background:var(--accent); border-color:var(--accent)}
-.back{font-size:12px; display:inline-block; margin-bottom:18px}
-.empty{color:var(--faint); font-style:italic; padding:30px 0; text-align:center; font-family:"Fraunces",serif; font-size:17px}
-.loading{color:var(--faint); padding:40px 0; text-align:center; letter-spacing:.2em; text-transform:uppercase; font-size:11px}
+.net .n-org{fill:var(--accent); stroke:none; opacity:.8}
+.legend{position:absolute; bottom:8px; right:12px; font-size:10.5px; color:var(--faint)}
 
-/* token modal */
-.tokenbox{
-  max-width:520px; margin:80px auto; background:var(--card); border:1.5px solid var(--ink);
-  box-shadow:5px 5px 0 var(--rule); padding:34px;
+/* ---------- gate ---------- */
+.gate{min-height:100vh; display:grid; place-items:center; padding:24px}
+.gatebox{width:100%; max-width:380px; background:var(--surface); border:1px solid var(--line);
+  border-radius:12px; box-shadow:var(--shadow); padding:28px}
+.gatebox .mark{width:34px; height:34px; border-radius:9px; background:var(--ink); display:grid; place-items:center; margin-bottom:14px}
+.gatebox .mark svg{stroke:var(--bg)}
+.gatebox h1{font-size:18px; font-weight:600; margin-bottom:4px}
+.gatebox p{color:var(--muted); font-size:13px; margin-bottom:16px}
+.gatebox input{width:100%; font:inherit; padding:9px 11px; border:1px solid var(--line);
+  border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); margin-bottom:10px}
+.gatebox input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+.gatebox .btn{width:100%; justify-content:center}
+
+@media (max-width:860px){
+  .shell{grid-template-columns:1fr}
+  .rail{position:static; height:auto; flex-direction:row; align-items:center; overflow-x:auto; border-right:none; border-bottom:1px solid var(--line)}
+  .brand{padding:12px 16px}
+  nav{flex-direction:row; padding:8px}
+  .rail-foot{display:none}
+  .page, .topbar{padding-left:16px; padding-right:16px}
 }
-.tokenbox h2{font-family:"Fraunces",serif; font-size:24px; margin-bottom:8px}
-.tokenbox p{font-size:12px; color:var(--faint); margin-bottom:16px}
-.tokenbox input{width:100%; font:inherit; padding:10px 12px; border:1.5px solid var(--ink); background:var(--paper); margin-bottom:14px}
-footer{border-top:1px solid var(--rule); color:var(--faint); font-size:11px; padding:14px 32px; letter-spacing:.06em}
-@media (max-width:700px){ main{padding:20px 16px 70px} header{padding:18px 16px 12px} .dossier{padding:20px 18px} }
 </style>
 </head>
 <body>
-<header>
-  <h1>Seekr</h1>
-  <span class="tagline">evidence-backed people graph · worldwide · no ranking</span>
-  <nav id="nav">
-    <a href="#/search">Search</a>
-    <a href="#/review">Review</a>
-    <a href="#/health">Sources</a>
-  </nav>
-</header>
-<main id="app"><div class="loading">opening Seekr…</div></main>
-<footer>Every claim traceable to its source · conflicting records preserved, never overwritten</footer>
-<script>
-const $ = (s)=>document.querySelector(s);
-const app = $("#app");
-const esc = (s)=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+<div id="root"></div>
 
-function token(){ return localStorage.getItem("rip_token") || ""; }
+<script>
+const $ = (s, r=document)=>r.querySelector(s);
+const esc = (s)=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (n)=>(n??0).toLocaleString();
+
+const ICON = {
+  logo:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>',
+  search:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg>',
+  people:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="3.2"/><path d="M22 20v-2a4 4 0 0 0-3-3.87"/></svg>',
+  review:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
+  plug:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v5"/></svg>',
+  caret:'<svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
+  back:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+  empty:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg>',
+};
+
+/* ---------------- auth ---------------- */
+const token = ()=>localStorage.getItem("seekr_token") || localStorage.getItem("rip_token") || "";
 async function api(path, opts={}){
   const res = await fetch(path, {...opts, headers:{...(opts.headers||{}), "Authorization":"Bearer "+token()}});
-  if(res.status===401){ renderToken(); throw new Error("unauthorized"); }
-  if(!res.ok) throw new Error("API "+res.status);
+  if(res.status===401){ renderGate(); throw new Error("unauthorized"); }
+  if(!res.ok){
+    let detail = "request failed ("+res.status+")";
+    try{ const j = await res.json(); if(j.detail) detail = typeof j.detail==="string"?j.detail:JSON.stringify(j.detail); }catch(e){}
+    throw new Error(detail);
+  }
   return res.json();
 }
+function renderGate(){
+  $("#root").innerHTML = `<div class="gate"><div class="gatebox">
+    <div class="mark">${ICON.logo}</div>
+    <h1>Sign in to Seekr</h1>
+    <p>Paste the API token (RIP_API_TOKEN). It is stored only in this browser.</p>
+    <input id="tok" type="password" placeholder="Token" autocomplete="off" autofocus>
+    <button class="btn primary" onclick="saveToken()">Continue</button>
+  </div></div>`;
+  $("#tok").addEventListener("keydown", e=>{ if(e.key==="Enter") saveToken(); });
+}
+function saveToken(){ localStorage.setItem("seekr_token", $("#tok").value.trim()); route(); }
+function signOut(){ localStorage.removeItem("seekr_token"); localStorage.removeItem("rip_token"); renderGate(); }
 
-function renderToken(){
-  app.innerHTML = `<div class="tokenbox">
-    <h2>Seekr access</h2>
-    <p>Paste the API bearer token (RIP_API_TOKEN). Stored only in this browser.</p>
-    <input id="tok" type="password" placeholder="token…" autofocus>
-    <button class="btn" onclick="saveToken()">Enter</button>
+/* ---------------- shell ---------------- */
+const NAV = [
+  ["#/search", "Search", ICON.search],
+  ["#/review", "Review", ICON.review],
+  ["#/sources", "Sources", ICON.plug],
+];
+function shell(active, topbar, body){
+  $("#root").innerHTML = `<div class="shell">
+    <aside class="rail">
+      <div class="brand">
+        <div class="mark">${ICON.logo}</div>
+        <div><b>Seekr</b><span>people graph</span></div>
+      </div>
+      <nav>${NAV.map(([href,label,icon])=>
+        `<a href="${href}" class="${active===href?"active":""}">${icon}${label}</a>`).join("")}</nav>
+      <div class="rail-foot" id="railstats">
+        <button class="themebtn" onclick="toggleTheme()">Toggle theme</button>
+        <button class="themebtn" onclick="signOut()">Sign out</button>
+      </div>
+    </aside>
+    <main>
+      <div class="topbar">${topbar}</div>
+      <div class="page" id="page">${body}</div>
+    </main>
   </div>`;
-  $("#tok").addEventListener("keydown",e=>{ if(e.key==="Enter") saveToken(); });
+  loadRailStats();
 }
-function saveToken(){ localStorage.setItem("rip_token", $("#tok").value.trim()); route(); }
-
-/* ---------- search ---------- */
-async function renderSearch(){
-  setNav("#/search");
-  const last = sessionStorage.getItem("last_q") || "";
-  app.innerHTML = `
-    <div class="searchbar">
-      <input id="q" placeholder="e.g. distributed systems researchers at University of Toronto, top 10" value="${esc(last)}">
-      <button onclick="runSearch()">Consult</button>
-      <button class="live" onclick="runSearch('true')" title="also query OpenAlex, Semantic Scholar and dblp live">Search live</button>
-    </div>
-    <div class="hints">try:
-      <code onclick="fillQ(this)">deep learning at University of Toronto</code>
-      <code onclick="fillQ(this)">machine learning, top 20</code>
-      <code onclick="fillQ(this)">neural networks researchers in Toronto</code>
-    </div>
-    <details class="filters" id="filterbox">
-      <summary>Filters</summary>
-      <div class="fgrid">
-        <label>Country<select id="f_country"><option value="">any</option></select></label>
-        <label>Source<select id="f_source"><option value="">any</option></select></label>
-        <label>Organization<input id="f_org" placeholder="any affiliation"></label>
-        <label>Current employer<input id="f_curorg" placeholder="present only"></label>
-        <label>Studied at<input id="f_edu" placeholder="university"></label>
-        <label>Role / title<input id="f_role" placeholder="e.g. professor"></label>
-        <label>Skill<input id="f_skill" placeholder="e.g. nlp"></label>
-        <label>Technology<input id="f_tech" placeholder="e.g. rust"></label>
-        <label>Location<input id="f_loc" placeholder="city / region"></label>
-        <label>Min publications<input id="f_pubs" type="number" min="0" placeholder="0"></label>
-        <label>Min citations<input id="f_cites" type="number" min="0" placeholder="0"></label>
-        <label>Active since<input id="f_active" placeholder="YYYY"></label>
-        <label>Min sources<input id="f_srcs" type="number" min="1" placeholder="1"></label>
-        <label>Sort<select id="f_sort">
-          <option value="relevance">insertion order</option>
-          <option value="recent">recently updated</option>
-          <option value="name">name A–Z</option></select></label>
-        <label class="chk"><input type="checkbox" id="f_cv"> has CV / résumé</label>
-        <label class="chk"><input type="checkbox" id="f_email"> has public email</label>
-      </div>
-      <div style="margin-top:10px">
-        <button class="btn" onclick="runFilters()">Apply filters</button>
-        <button class="btn" onclick="clearFilters()">Clear</button>
-      </div>
-    </details>
-    <div id="results"></div>`;
-  loadFacets();
-  $("#q").addEventListener("keydown",e=>{ if(e.key==="Enter") runSearch(); });
-  if(last) runSearch();
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur==="dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("seekr_theme", next);
 }
-function fillQ(el){ $("#q").value = el.textContent; runSearch(); }
+(function(){ const t=localStorage.getItem("seekr_theme"); if(t) document.documentElement.setAttribute("data-theme",t); })();
 
-const FILTER_FIELDS = {
+async function loadRailStats(){
+  const el = $("#railstats"); if(!el) return;
+  try{
+    const [sources, countries] = await Promise.all([
+      api("/v1/facets?field=source"), api("/v1/facets?field=country&limit=200"),
+    ]);
+    const people = sources.values.reduce((m,v)=>Math.max(m,v.people),0);
+    el.insertAdjacentHTML("afterbegin",
+      `<div class="stat"><span>People</span><b>${fmt(people)}</b></div>
+       <div class="stat"><span>Sources</span><b>${sources.values.length}</b></div>
+       <div class="stat"><span>Countries</span><b>${countries.values.length}</b></div>`);
+  }catch(e){}
+}
+
+/* ---------------- search ---------------- */
+const EXAMPLES = [
+  "machine learning at University of Toronto",
+  "deep learning, top 20",
+  "product designers at Swiggy",
+];
+const FIELDS = {
   f_country:"country", f_source:"source", f_org:"organization",
   f_curorg:"current_organization", f_edu:"education", f_role:"role",
   f_skill:"skill", f_tech:"technology", f_loc:"location",
   f_pubs:"min_publications", f_cites:"min_citations", f_active:"active_since",
   f_srcs:"min_sources", f_sort:"sort",
 };
-function filterParams(){
-  const p = new URLSearchParams();
-  for(const [id, name] of Object.entries(FILTER_FIELDS)){
-    const el = document.getElementById(id);
-    if(el && el.value && el.value !== "relevance") p.set(name, el.value);
-  }
-  if(document.getElementById("f_cv")?.checked) p.set("has_cv","true");
-  if(document.getElementById("f_email")?.checked) p.set("has_email","true");
-  return p;
+let PAGE = {mode:"query", q:"", offset:0, rows:[]};
+
+function searchTopbar(q){
+  return `<div class="searchrow">
+    <div class="searchwrap">
+      ${ICON.search}
+      <input class="search" id="q" placeholder="Search people, skills, organizations…" value="${esc(q||"")}">
+      <span class="kbd">/</span>
+    </div>
+    <button class="btn primary" onclick="runQuery()">Search</button>
+    <button class="btn" onclick="runQuery('true')" title="Also query live sources">Live</button>
+  </div>`;
 }
-function anyFilter(){ return [...filterParams().keys()].length > 0; }
-function clearFilters(){
-  Object.keys(FILTER_FIELDS).forEach(id=>{ const e=document.getElementById(id); if(e) e.value=""; });
-  ["f_cv","f_email"].forEach(id=>{ const e=document.getElementById(id); if(e) e.checked=false; });
-  const s=document.getElementById("f_sort"); if(s) s.value="relevance";
-  runFilters();
+
+async function renderSearch(){
+  const last = sessionStorage.getItem("seekr_q") || "";
+  shell("#/search", searchTopbar(last), `
+    <div class="examples"><em>Try</em>${EXAMPLES.map(x=>
+      `<button class="chipbtn" onclick="useExample(this)">${esc(x)}</button>`).join("")}</div>
+    <details class="filters" id="filterbox">
+      <summary>${ICON.caret} Filters <span class="count" id="fcount" hidden>0</span></summary>
+      <div class="fgrid">
+        <label>Country<select id="f_country"><option value="">Any</option></select></label>
+        <label>Source<select id="f_source"><option value="">Any</option></select></label>
+        <label>Organization<input id="f_org" placeholder="Ever affiliated"></label>
+        <label>Current employer<input id="f_curorg" placeholder="Present only"></label>
+        <label>Studied at<input id="f_edu" placeholder="University"></label>
+        <label>Role<input id="f_role" placeholder="e.g. professor"></label>
+        <label>Skill<input id="f_skill" placeholder="e.g. nlp"></label>
+        <label>Technology<input id="f_tech" placeholder="e.g. rust"></label>
+        <label>Location<input id="f_loc" placeholder="City or region"></label>
+        <label>Min publications<input id="f_pubs" type="number" min="0" placeholder="0"></label>
+        <label>Min citations<input id="f_cites" type="number" min="0" placeholder="0"></label>
+        <label>Active since<input id="f_active" placeholder="YYYY"></label>
+        <label>Min sources<input id="f_srcs" type="number" min="1" placeholder="1"></label>
+        <label>Sort<select id="f_sort">
+          <option value="relevance">Default order</option>
+          <option value="recent">Recently updated</option>
+          <option value="name">Name A–Z</option></select></label>
+        <label class="chk"><input type="checkbox" id="f_cv"> Has CV</label>
+        <label class="chk"><input type="checkbox" id="f_email"> Has email</label>
+      </div>
+      <div class="filter-actions">
+        <button class="btn primary" onclick="runFilters()">Apply filters</button>
+        <button class="btn" onclick="clearFilters()">Clear</button>
+      </div>
+    </details>
+    <div id="results"></div>`);
+  bindSearchKeys();
+  loadFacets();
+  if(last) runQuery();
+}
+function useExample(el){ $("#q").value = el.textContent; runQuery(); }
+function bindSearchKeys(){
+  const q = $("#q");
+  q.addEventListener("keydown", e=>{
+    if(e.key==="Enter") runQuery();
+    if(e.key==="Escape"){ q.value=""; q.blur(); }
+  });
+  document.addEventListener("keydown", e=>{
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if((e.key==="/" && !typing) || ((e.metaKey||e.ctrlKey) && e.key==="k")){
+      e.preventDefault(); $("#q")?.focus(); $("#q")?.select();
+    }
+  });
 }
 async function loadFacets(){
   for(const [id, field] of [["f_country","country"],["f_source","source"]]){
     try{
-      const d = await api("/v1/facets?field="+field);
-      const el = document.getElementById(id);
-      if(!el) continue;
-      el.innerHTML = `<option value="">any</option>` + d.values.map(v=>
-        `<option value="${esc(v.value)}">${esc(v.value)} (${v.people.toLocaleString()})</option>`).join("");
+      const d = await api("/v1/facets?field="+field+"&limit=100");
+      const el = $("#"+id); if(!el) continue;
+      el.innerHTML = `<option value="">Any</option>` + d.values.map(v=>
+        `<option value="${esc(v.value)}">${esc(v.value)} · ${fmt(v.people)}</option>`).join("");
     }catch(e){}
   }
 }
+function filterParams(){
+  const p = new URLSearchParams();
+  for(const [id, name] of Object.entries(FIELDS)){
+    const el = $("#"+id);
+    if(el && el.value && el.value !== "relevance") p.set(name, el.value);
+  }
+  if($("#f_cv")?.checked) p.set("has_cv","true");
+  if($("#f_email")?.checked) p.set("has_email","true");
+  return p;
+}
+function syncFilterCount(){
+  const n = [...filterParams().keys()].length;
+  const badge = $("#fcount"); if(!badge) return;
+  badge.textContent = n; badge.hidden = n===0;
+}
+function clearFilters(){
+  Object.keys(FIELDS).forEach(id=>{ const e=$("#"+id); if(e) e.value=""; });
+  ["f_cv","f_email"].forEach(id=>{ const e=$("#"+id); if(e) e.checked=false; });
+  const s=$("#f_sort"); if(s) s.value="relevance";
+  syncFilterCount();
+  $("#results").innerHTML = "";
+}
+
+function busy(msg){ $("#results").innerHTML = `<div class="loading"><div class="spinner"></div>${esc(msg)}</div>`; }
+
+async function runQuery(discover, offset){
+  const q = $("#q").value.trim(); if(!q) return;
+  sessionStorage.setItem("seekr_q", q);
+  const paging = typeof offset === "number" && offset > 0;
+  if(!paging){ PAGE = {mode:"query", q, offset:0, rows:[]}; busy(discover?"Querying live sources…":"Searching…"); }
+  try{
+    const data = await api("/v1/query?q="+encodeURIComponent(q)
+      + (paging?"&offset="+offset:"") + (discover?"&discover="+discover:""));
+    renderResults(data, {discover});
+  }catch(e){ if(e.message!=="unauthorized") $("#results").innerHTML = `<div class="banner">${esc(e.message)}</div>`; }
+}
 async function runFilters(offset){
+  syncFilterCount();
   const params = filterParams();
   const q = $("#q").value.trim();
   if(q) params.set("q", q);
   const paging = typeof offset === "number" && offset > 0;
-  if(!paging){ PAGE = {q:"__filters__", offset:0, rows:[]}; $("#results").innerHTML = `<div class="loading">filtering…</div>`; }
+  if(!paging){ PAGE = {mode:"filters", q, offset:0, rows:[]}; busy("Filtering…"); }
   if(paging) params.set("offset", offset);
   params.set("limit", 50);
-  try{
-    const data = await api("/v1/persons?"+params.toString());
-    renderRows(data, {filtered:true});
-  }catch(e){ $("#results").innerHTML = `<div class="warn">filter failed: ${esc(e.message)}</div>`; }
+  try{ renderResults(await api("/v1/persons?"+params.toString()), {filtered:true}); }
+  catch(e){ if(e.message!=="unauthorized") $("#results").innerHTML = `<div class="banner">${esc(e.message)}</div>`; }
 }
-let PAGE = {q:"", offset:0, rows:[]};
-async function loadMore(){
-  const btn = document.getElementById("more");
-  if(btn){ btn.disabled = true; btn.textContent = "loading…"; }
-  await runSearch(null, PAGE.offset);
-}
-async function runSearch(discover, offset){
-  const q = $("#q").value.trim(); if(!q) return;
-  sessionStorage.setItem("last_q", q);
-  const paging = typeof offset === "number" && offset > 0 && q === PAGE.q;
-  if(!paging){ PAGE = {q, offset:0, rows:[]}; }
-  if(!paging) $("#results").innerHTML = `<div class="loading">${discover?"querying live sources…":"consulting the index…"}</div>`;
-  try{
-    const data = await api("/v1/query?q="+encodeURIComponent(q)
-      + (paging ? "&offset="+offset : "")
-      + (discover ? "&discover="+discover : ""));
-    const f = data.applied_filters;
-    const chips = [
-      ...f.skills.map(s=>`<span class="chip"><b>skill</b>${esc(s)}</span>`),
-      ...f.organizations.map(o=>`<span class="chip"><b>org</b>${esc(o)}</span>`),
-      ...f.locations.map(l=>`<span class="chip"><b>place</b>${esc(l)}</span>`),
-      ...f.name_terms.map(n=>`<span class="chip"><b>name</b>${esc(n)}</span>`),
-      `<span class="chip"><b>limit</b>${f.limit}</span>`,
-    ].join("");
-    const warn = data.unmatched_terms.length
-      ? `<div class="warn">⚠ not applied (unknown to the archive): ${data.unmatched_terms.map(esc).join(", ")}</div>` : "";
-    renderRows(data, {});
-    return;
-  }catch(e){ if(e.message!=="unauthorized") $("#results").innerHTML = `<div class="warn">query failed: ${esc(e.message)}</div>`; }
+function loadMore(){
+  const b = $("#more"); if(b){ b.disabled = true; b.textContent = "Loading…"; }
+  return PAGE.mode==="filters" ? runFilters(PAGE.offset) : runQuery(null, PAGE.offset);
 }
 
-function renderRows(data, opts){
-    const chips = (data.applied_filters ? [
-      ...(data.applied_filters.skills||[]).map(s=>`<span class="chip"><b>skill</b>${esc(s)}</span>`),
-      ...(data.applied_filters.skill_patterns||[]).map(s=>`<span class="chip"><b>matches</b>${esc(s)}</span>`),
-      ...(data.applied_filters.organizations||[]).map(o=>`<span class="chip"><b>org</b>${esc(o)}</span>`),
-      ...(data.applied_filters.locations||[]).map(l=>`<span class="chip"><b>place</b>${esc(l)}</span>`),
-      ...(data.applied_filters.name_terms||[]).map(n=>`<span class="chip"><b>name</b>${esc(n)}</span>`),
-    ].join("") : "");
-    const warn = (data.unmatched_terms||[]).length
-      ? `<div class="warn">⚠ not applied (unknown to Seekr): ${data.unmatched_terms.map(esc).join(", ")}</div>` : "";
-    const pageRows = data.results.map(p=>{
-      const skills = (p.attributes||[])
-        .filter(a=>a.attribute_type==="skill"||a.attribute_type==="research_interest")
-        .slice(0,3).map(a=>esc(a.value)).join(", ");
-      const srcs = [...new Set((p.attributes||[]).flatMap(a=>a.sources||[]))];
-      // show the affiliation that matched the filter; the current one is
-      // often different, which otherwise reads as a wrong result
-      const primary = p.matched_organization || p.current_organization || "";
-      const others = (p.organizations||[]).filter(o=>o!==primary);
-      const orgCell = primary
-        ? `${esc(primary)}${p.matched_organization && p.current_organization && p.current_organization!==primary
-            ? `<div class="sub">now: ${esc(p.current_organization)}</div>` : ""}`
-          + (others.length ? `<div class="sub">+${others.length} more</div>` : "")
-        : '<span class="muted">—</span>';
-      return `<tr onclick="location.hash='#/person/${p.id}'">
-        <td class="nm">${esc(p.canonical_name||"(unnamed)")}</td>
-        <td class="org">${orgCell}</td>
-        <td class="loc">${esc(p.location||"")||'<span class="muted">—</span>'}</td>
-        <td class="sk">${skills||'<span class="muted">—</span>'}</td>
-        <td class="src">${srcs.length?esc(srcs.join(" ")):'<span class="muted">—</span>'}</td>
-      </tr>`;
-    });
-    // accumulate across pages so "Load more" appends instead of replacing
-    PAGE.rows = PAGE.rows.concat(pageRows);
-    PAGE.offset = (data.next_offset ?? PAGE.rows.length);
-    const rows = PAGE.rows.join("");
-    const filtered = opts && opts.filtered;
+function renderResults(data, opts={}){
+  const f = data.applied_filters;
+  const pills = f ? [
+    ...(f.skills||[]).map(s=>`<span class="pill"><b>skill</b>${esc(s)}</span>`),
+    ...(f.skill_patterns||[]).map(s=>`<span class="pill"><b>matches</b>${esc(s)}</span>`),
+    ...(f.organizations||[]).map(o=>`<span class="pill"><b>org</b>${esc(o)}</span>`),
+    ...(f.locations||[]).map(l=>`<span class="pill"><b>place</b>${esc(l)}</span>`),
+    ...(f.name_terms||[]).map(n=>`<span class="pill"><b>name</b>${esc(n)}</span>`),
+  ].join("") : "";
+  const unmatched = (data.unmatched_terms||[]).length
+    ? `<span class="pill warn">not applied: ${data.unmatched_terms.map(esc).join(", ")}</span>` : "";
 
-    const nothing = data.matched_nothing
-      ? `<div class="empty">${esc(data.explanation||"No filter could be applied.")}</div>`
-      : `<div class="empty">No one matches these filters.</div>`;
+  const rows = data.results.map(p=>{
+    const skills = (p.attributes||[])
+      .filter(a=>a.attribute_type==="skill"||a.attribute_type==="research_interest")
+      .slice(0,3).map(a=>esc(a.value)).join(", ");
+    const srcs = [...new Set((p.attributes||[]).flatMap(a=>a.sources||[]))];
+    const primary = p.matched_organization || p.current_organization || "";
+    const others = (p.organizations||[]).filter(o=>o!==primary);
+    const orgSub = [
+      p.matched_organization && p.current_organization && p.current_organization!==primary
+        ? "now: "+esc(p.current_organization) : "",
+      others.length ? "+"+others.length+" more" : "",
+    ].filter(Boolean).join(" · ");
+    return `<tr onclick="location.hash='#/person/${p.id}'">
+      <td class="nm">${esc(p.canonical_name||"Unnamed")}<span class="id">${esc(p.id.slice(0,8))}</span></td>
+      <td class="org">${primary?esc(primary):'<span class="muted">—</span>'}
+        ${orgSub?`<div class="sub2">${orgSub}</div>`:""}</td>
+      <td class="org">${esc(p.location||"")||'<span class="muted">—</span>'}</td>
+      <td class="sk">${skills||'<span class="muted">—</span>'}</td>
+      <td>${srcs.length?srcs.map(s=>`<span class="srcpill">${esc(s)}</span>`).join(""):'<span class="muted">—</span>'}</td>
+    </tr>`;
+  });
+  PAGE.rows = PAGE.rows.concat(rows);
+  PAGE.offset = data.next_offset ?? PAGE.rows.length;
 
-    const sugg = data.discovery_suggestions || [];
-    const suggBlock = sugg.length ? `
-      <div class="resultcount">${sugg.length} live candidates — not indexed yet</div>
-      <div class="results"><table class="list">
-        <thead><tr><th>Name</th><th>Affiliation</th><th>Role / place</th><th>Source</th><th>Add</th></tr></thead>
+  const total = data.total_matches ?? PAGE.rows.length;
+  const sugg = data.discovery_suggestions || [];
+  const suggBlock = sugg.length ? `
+    <section class="block"><h2>Live candidates <span class="n">${sugg.length}</span></h2>
+      <div class="card"><div class="tablewrap"><table class="list">
+        <thead><tr><th>Name</th><th>Affiliation</th><th>Role &amp; place</th><th>Source</th><th></th></tr></thead>
         <tbody>${sugg.map(x=>`<tr>
-          <td class="nm">${esc(x.name||"(unnamed)")}</td>
+          <td class="nm">${esc(x.name||"Unnamed")}</td>
           <td class="org">${esc(x.affiliation||"")||'<span class="muted">—</span>'}</td>
           <td class="sk">${esc([x.role,x.location].filter(Boolean).join(" · "))||'<span class="muted">—</span>'}</td>
-          <td class="src">${esc(x.source)}</td>
-          <td><button class="btn" onclick="queueOne('${esc(x.source)}','${esc(x.external_id)}',this)">Queue</button></td>
-        </tr>`).join("")}</tbody></table></div>` : "";
+          <td><span class="srcpill">${esc(x.source)}</span></td>
+          <td class="num"><button class="btn sm" onclick="event.stopPropagation();queueOne('${esc(x.source)}','${esc(x.external_id)}',this)">Add</button></td>
+        </tr>`).join("")}</tbody></table></div></div></section>` : "";
 
-    const offerLive = (!data.count && !sugg.length && !discover)
-      ? `<div class="empty">Nothing indexed yet.
-           <button class="btn" style="margin-left:10px" onclick="runSearch('true')">Search live sources</button></div>`
-      : "";
+  let main;
+  if(PAGE.rows.length){
+    main = `<div class="card"><div class="tablewrap"><table class="list">
+        <thead><tr><th>Name</th><th>Organization</th><th>Location</th><th>Skills &amp; interests</th><th>Sources</th></tr></thead>
+        <tbody>${PAGE.rows.join("")}</tbody></table></div>
+      ${data.has_more?`<div class="loadmore"><button class="btn" id="more" onclick="loadMore()">Load 50 more</button></div>`:""}
+      </div>`;
+  } else if(data.matched_nothing){
+    main = emptyState("No filters could be applied",
+      data.explanation || "None of those terms exist in the corpus yet.",
+      !opts.discover ? `<button class="btn primary" onclick="runQuery('true')">Search live sources</button>` : "");
+  } else if(!sugg.length){
+    main = emptyState("No matches", "No one in the corpus matches these filters.",
+      !opts.discover ? `<button class="btn primary" onclick="runQuery('true')">Search live sources</button>` : "");
+  } else { main = ""; }
 
-    $("#results").innerHTML = `
-      <div class="filterline">${chips}</div>${warn}
-      ${offerLive}
-      ${data.count || PAGE.rows.length ? `<div class="resultcount">showing ${PAGE.rows.length} of ${(data.total_matches??PAGE.rows.length).toLocaleString()} matching records</div>
-        <div class="results"><table class="list">
-          <thead><tr><th>Name</th><th>Organization</th><th>Location</th>
-            <th>Skills &amp; interests</th><th>Sources</th></tr></thead>
-          <tbody>${rows}</tbody></table></div>
-        ${data.has_more ? `<div style="text-align:center;margin-top:14px">
-          <button class="btn" id="more" onclick="${filtered?`runFilters(${PAGE.offset})`:"loadMore()"}">Load 50 more</button></div>` : ""}`
-      : (offerLive ? "" : nothing)}
-      ${suggBlock}`;
+  $("#results").innerHTML = `
+    <div class="meta">
+      <div class="count">${PAGE.rows.length?`<b>${fmt(PAGE.rows.length)}</b> of ${fmt(total)} matching`:""}</div>
+      <div class="pills">${pills}${unmatched}</div>
+    </div>
+    ${main}${suggBlock}`;
 }
-
-/* ---------- person dossier ---------- */
+function emptyState(title, body, action){
+  return `<div class="card"><div class="empty">
+    <div class="icon">${ICON.empty}</div>
+    <h3>${esc(title)}</h3><p>${esc(body)}</p>${action||""}
+  </div></div>`;
+}
 async function queueOne(source, externalId, btn){
-  btn.disabled = true; btn.textContent = "queuing…";
+  btn.disabled = true; btn.textContent = "Adding…";
   try{
-    const r = await api("/v1/leads", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({source, external_id: externalId, reason:"queued from UI live search"}),
-    });
-    btn.textContent = r.status === "queued" ? "queued" : r.status.replace("_"," ");
-  }catch(e){ btn.textContent = "failed"; btn.disabled = false; }
+    const r = await api("/v1/leads", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({source, external_id: externalId, reason:"queued from Seekr UI"})});
+    btn.textContent = r.status==="queued" ? "Queued" : r.status.replace(/_/g," ");
+  }catch(e){ btn.textContent = "Failed"; btn.disabled = false; }
 }
 
+/* ---------------- person ---------------- */
 async function renderPerson(id){
-  setNav(null);
-  app.innerHTML = `<div class="loading">retrieving dossier…</div>`;
-  const [p, ev, pubs, projs, orgs, prov, conf, graph] = await Promise.all([
-    api("/v1/persons/"+id), api("/v1/persons/"+id+"/evidence"),
-    api("/v1/persons/"+id+"/publications"), api("/v1/persons/"+id+"/projects"),
-    api("/v1/persons/"+id+"/organizations"), api("/v1/persons/"+id+"/provenance"),
-    api("/v1/persons/"+id+"/conflicts"), api("/v1/persons/"+id+"/graph"),
-  ]);
-  const docs = await api("/v1/persons/"+id+"/documents");
-  const merged = p.merged_into ? `<div class="warn">⚠ this record was merged; showing canonical dossier ${esc(p.id)}</div>` : "";
+  shell(null, `<a class="btn sm" href="#/search">${ICON.back} Back to results</a>`,
+    `<div class="loading"><div class="spinner"></div>Loading profile…</div>`);
+  let p, ev, pubs, projs, orgs, prov, conf, graph, docs;
+  try{
+    [p, ev, pubs, projs, orgs, prov, conf, graph, docs] = await Promise.all([
+      api("/v1/persons/"+id), api("/v1/persons/"+id+"/evidence"),
+      api("/v1/persons/"+id+"/publications"), api("/v1/persons/"+id+"/projects"),
+      api("/v1/persons/"+id+"/organizations"), api("/v1/persons/"+id+"/provenance"),
+      api("/v1/persons/"+id+"/conflicts"), api("/v1/persons/"+id+"/graph"),
+      api("/v1/persons/"+id+"/documents"),
+    ]);
+  }catch(e){
+    if(e.message!=="unauthorized") $("#page").innerHTML = `<div class="banner">${esc(e.message)}</div>`;
+    return;
+  }
   const attrs = (p.attributes||[]).sort((a,b)=>b.evidence_count-a.evidence_count);
-  app.innerHTML = `
-    <a class="back" href="#/search">← back to results</a>${merged}
-    <div class="dossier">
-      <h2>${esc(p.canonical_name||"(unnamed)")}
-        ${attrs.some(a=>a.evidence_count>1)?'<span class="stamp ok">corroborated</span>':""}
-        ${conf.conflicts.filter(c=>c.status==="active").length?'<span class="stamp">disputed</span>':""}
-      </h2>
-      <div class="aka">${p.aliases?.length? "also recorded as: "+p.aliases.map(esc).join(" · "):""}</div>
-      <div class="meta">${esc([p.current_role,p.current_organization,p.location].filter(Boolean).join(" · "))}</div>
-      <div class="meta">file ${esc(p.id)} · updated ${esc((p.updated_at||"").slice(0,10))}</div>
+  const corroborated = attrs.some(a=>a.evidence_count>1);
+  const disputed = (conf.conflicts||[]).filter(c=>c.status==="active").length;
 
-      <section class="block"><h4>Attributes · evidence-backed</h4>
-        <table><tr><th>type</th><th>value</th><th style="text-align:right">evidence</th><th>attested by</th></tr>
-        ${attrs.map(a=>`<tr><td>${esc(a.attribute_type)}</td><td>${esc(a.value)}</td>
-          <td class="num">${a.evidence_count}</td><td>${a.sources.map(esc).join(", ")}</td></tr>`).join("")}
-        </table></section>
+  $("#page").innerHTML = `
+    ${p.merged_into?`<div class="banner info">This record was merged; showing the canonical profile.</div>`:""}
+    <div class="phead">
+      <div style="flex:1; min-width:240px">
+        <h1>${esc(p.canonical_name||"Unnamed")}</h1>
+        <div class="role">${esc([p.current_role,p.current_organization,p.location].filter(Boolean).join(" · "))||"&nbsp;"}</div>
+        <div class="badges">
+          ${corroborated?`<span class="badge ok">Corroborated</span>`:""}
+          ${disputed?`<span class="badge warn">${disputed} disputed</span>`:""}
+          <span class="badge">${prov.sources.length} source${prov.sources.length===1?"":"s"}</span>
+          ${p.country?`<span class="badge">${esc(p.country)}</span>`:""}
+        </div>
+        ${p.aliases?.length?`<div class="idline aka" title="${esc(p.aliases.join(" · "))}">also ${esc(p.aliases.slice(0,5).join(" · "))}${p.aliases.length>5?` +${p.aliases.length-5} more`:""}</div>`:""}
+        <div class="idline">${esc(p.id)} · updated ${esc((p.updated_at||"").slice(0,10))}</div>
+      </div>
+    </div>
 
-      ${conf.conflicts.length?`<section class="block"><h4>Disputed records</h4>
-        ${conf.conflicts.map(c=>`<div class="conflict">
-          <div style="font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--accent);margin-bottom:6px">${esc(c.attribute)} · ${esc(c.status)}</div>
-          <div class="vs"><span><span class="v">${esc(c.side_a.value)}</span><div class="src">per ${esc(c.side_a.source||"unknown")}</div></span>
-          <span class="m">vs</span>
-          <span><span class="v">${esc(c.side_b.value)}</span><div class="src">per ${esc(c.side_b.source||"unknown")}</div></span></div>
-        </div>`).join("")}</section>`:""}
+    <div class="grid2">
+      <section class="block"><h2>Attributes <span class="n">${attrs.length}</span></h2>
+        <div class="card"><div class="inner"><table class="data">
+          <tr><th>Type</th><th>Value</th><th class="num">Sources</th></tr>
+          ${attrs.slice(0,40).map(a=>`<tr>
+            <td class="muted">${esc(a.attribute_type)}</td>
+            <td>${esc(a.value)}<div class="idline">${a.sources.map(esc).join(", ")}</div></td>
+            <td class="num">${a.evidence_count}</td></tr>`).join("")
+            || `<tr><td class="muted">No attributes yet</td></tr>`}
+        </table></div></div></section>
 
-      ${orgs.affiliations.length?`<section class="block"><h4>Affiliations</h4>
-        <table><tr><th>organization</th><th>relation</th><th>role</th><th>period</th></tr>
-        ${orgs.affiliations.map(a=>`<tr><td>${esc(a.organization)}</td><td>${esc(a.relation)}</td>
-          <td>${esc(a.role||"—")}</td><td>${esc([a.start_date,a.end_date].filter(Boolean).join("–")||(a.is_current?"current":"—"))}</td></tr>`).join("")}
-        </table></section>`:""}
+      <section class="block"><h2>Affiliations <span class="n">${orgs.affiliations.length}</span></h2>
+        <div class="card"><div class="inner"><table class="data">
+          <tr><th>Organization</th><th>Role</th><th>Period</th></tr>
+          ${orgs.affiliations.map(a=>`<tr>
+            <td>${esc(a.organization)}<div class="idline">${esc(a.relation)}</div></td>
+            <td>${esc(a.role||"—")}</td>
+            <td class="muted">${esc([a.start_date,a.end_date].filter(Boolean).join("–")||(a.is_current?"current":"—"))}</td>
+          </tr>`).join("") || `<tr><td class="muted">None recorded</td></tr>`}
+        </table></div></div></section>
+    </div>
 
-      ${pubs.publications.length?`<section class="block"><h4>Publications · ${pubs.publications.length}</h4>
-        <table><tr><th>title</th><th>venue</th><th>year</th><th style="text-align:right">citations</th></tr>
-        ${pubs.publications.slice(0,40).map(w=>`<tr><td>${w.url?`<a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.title)}</a>`:esc(w.title)}</td>
-          <td>${esc(w.venue||"—")}</td><td>${esc((w.published_date||"").slice(0,4))}</td><td class="num">${w.citations??"—"}</td></tr>`).join("")}
-        </table>${pubs.publications.length>40?`<div class="meta" style="margin-top:6px">…and ${pubs.publications.length-40} more</div>`:""}</section>`:""}
+    ${disputed?`<section class="block"><h2>Disputed facts <span class="n">${conf.conflicts.length}</span></h2>
+      ${conf.conflicts.map(c=>`<div class="conflict">
+        <div class="ct">${esc(c.attribute)}</div>
+        <div class="vs">
+          <div class="side"><b>${esc(c.side_a.value)}</b><span>per ${esc(c.side_a.source||"unknown")}</span></div>
+          <div class="mid">vs</div>
+          <div class="side"><b>${esc(c.side_b.value)}</b><span>per ${esc(c.side_b.source||"unknown")}</span></div>
+        </div></div>`).join("")}</section>`:""}
 
-      ${projs.projects.length?`<section class="block"><h4>Projects</h4>
-        <table><tr><th>name</th><th>tech</th><th>activity</th><th>last active</th></tr>
-        ${projs.projects.map(x=>`<tr><td>${x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>`:esc(x.name)}</td>
-          <td>${(x.technologies||[]).map(esc).join(", ")}</td>
-          <td>${esc(Object.entries(x.activity||{}).map(([k,v])=>k+" "+v).join(" · "))}</td>
-          <td>${esc(x.last_active_at||"—")}</td></tr>`).join("")}
-        </table></section>`:""}
-
-      <section class="block"><h4>Links &amp; documents</h4>
-        ${docs.cvs.length ? `<table><tr><th>CV / résumé</th><th>found on</th><th>confidence</th></tr>
+    <section class="block"><h2>Links &amp; documents</h2>
+      <div class="card"><div class="inner">
+        ${docs.cvs.length?`<table class="data">
+          <tr><th>CV / résumé</th><th>Found on</th></tr>
           ${docs.cvs.map(c=>`<tr>
             <td><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.url)}</a></td>
-            <td><a href="${esc(c.found_on||"")}" target="_blank" rel="noopener">${esc(c.found_on||"—")}</a>
-                <div class="sub">${esc(c.evidence||"")}</div></td>
-            <td class="num">${c.confidence}</td></tr>`).join("")}</table>`
-          : `<div class="sub" style="margin-bottom:10px">No published CV found. Seekr only links documents a person or institution publishes; it never creates one.</div>`}
-        ${docs.profiles.length ? `<table style="margin-top:12px"><tr><th>profile</th><th>type</th></tr>
+            <td class="muted">${esc(c.evidence||c.found_on||"")}</td></tr>`).join("")}</table>`
+          : `<p class="muted" style="font-size:13px">No published CV found. Seekr only links documents a person or their institution publishes.</p>`}
+        ${docs.profiles.length?`<table class="data" style="margin-top:12px">
+          <tr><th>Profile</th><th>Type</th></tr>
           ${docs.profiles.map(pf=>`<tr>
             <td><a href="${esc(pf.url)}" target="_blank" rel="noopener">${esc(pf.url)}</a></td>
-            <td>${esc(pf.kind)}</td></tr>`).join("")}</table>` : ""}
-      </section>
+            <td class="muted">${esc(pf.kind)}</td></tr>`).join("")}</table>`:""}
+      </div></div></section>
 
-      ${graph.edges.length?`<section class="block"><h4>Network · ${graph.nodes.length-1} connections</h4>
-        <div class="net" id="net"><svg id="netsvg"></svg>
-        <span class="legend">■ organization · ● co-author · click to open</span></div></section>`:""}
+    ${pubs.publications.length?`<section class="block"><h2>Publications <span class="n">${pubs.publications.length}</span></h2>
+      <div class="card"><div class="tablewrap"><table class="list">
+        <thead><tr><th>Title</th><th>Venue</th><th>Year</th><th class="num">Citations</th></tr></thead>
+        <tbody>${pubs.publications.slice(0,30).map(w=>`<tr>
+          <td>${w.url?`<a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.title)}</a>`:esc(w.title)}</td>
+          <td class="muted">${esc(w.venue||"—")}</td>
+          <td class="muted">${esc((w.published_date||"").slice(0,4))}</td>
+          <td class="num">${w.citations??"—"}</td></tr>`).join("")}</tbody>
+      </table></div></div></section>`:""}
 
-      <section class="block"><h4>Provenance · where this file came from</h4>
-        <table><tr><th>source</th><th>external id</th><th>attached by</th><th>confidence</th><th>last observed</th></tr>
-        ${prov.sources.map(s=>`<tr><td>${esc(s.source)}</td>
+    ${projs.projects.length?`<section class="block"><h2>Projects <span class="n">${projs.projects.length}</span></h2>
+      <div class="card"><div class="tablewrap"><table class="list">
+        <thead><tr><th>Name</th><th>Tech</th><th>Activity</th><th>Last active</th></tr></thead>
+        <tbody>${projs.projects.map(x=>`<tr>
+          <td>${x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}</a>`:esc(x.name)}</td>
+          <td class="muted">${(x.technologies||[]).map(esc).join(", ")||"—"}</td>
+          <td class="muted">${esc(Object.entries(x.activity||{}).map(([k,v])=>k+" "+v).join(" · "))||"—"}</td>
+          <td class="muted">${esc(x.last_active_at||"—")}</td></tr>`).join("")}</tbody>
+      </table></div></div></section>`:""}
+
+    ${graph.edges.length?`<section class="block"><h2>Network <span class="n">${graph.nodes.length-1}</span></h2>
+      <div class="card"><div class="net" id="net"><svg id="netsvg"></svg>
+        <span class="legend">■ organization · ● co-author</span></div></div></section>`:""}
+
+    <section class="block"><h2>Provenance <span class="n">${prov.sources.length}</span></h2>
+      <div class="card"><div class="tablewrap"><table class="list">
+        <thead><tr><th>Source</th><th>Record</th><th>Matched by</th><th>Review</th><th>Seen</th></tr></thead>
+        <tbody>${prov.sources.map(s=>`<tr>
+          <td><span class="srcpill">${esc(s.source)}</span></td>
           <td>${s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.external_id)}</a>`:esc(s.external_id)}</td>
-          <td>${esc(s.match_signals?.reason||s.match_method)}</td><td class="num">${s.match_confidence}</td>
-          <td>${esc((s.last_observed||"").slice(0,10))}</td></tr>`).join("")}
-        </table></section>
-    </div>`;
-  if(graph.edges.length) drawNetwork(graph, id);
+          <td class="muted">${esc(s.match_signals?.reason||s.match_method)}</td>
+          <td>${s.review_state==="approved"?`<span class="vstate corroborated">approved</span>`
+              :`<span class="vstate unverified">${esc(s.review_state||"unreviewed")}</span>`}</td>
+          <td class="muted">${esc((s.last_observed||"").slice(0,10))}</td></tr>`).join("")}</tbody>
+      </table></div></div></section>`;
+  if(graph.edges.length) drawNetwork(graph, p.id);
 }
 
-/* radial layout with label-box separation; no external library.
-   Labels are wide and short, so nodes are separated as boxes rather than
-   circles — otherwise names collide even when the dots don't. */
+/* radial layout with label-box separation; no external library */
 const MAX_LABEL = 20;
 function drawNetwork(graph, selfId){
-  const svg = document.getElementById("netsvg");
-  if(!svg) return;
+  const svg = $("#netsvg"); if(!svg) return;
   const others = graph.nodes.filter(n=>n.id!==selfId);
-  const rings = Math.ceil(others.length/9);
-  // fixed viewBox: CSS scales it to the container, so text stays proportional
-  const W = 900;
-  const H = Math.min(720, 300 + rings*120);
-  const cx = W/2, cy = H/2;
-
+  const rings = Math.max(1, Math.ceil(others.length/9));
+  const W = 900, H = Math.min(700, 280 + rings*115), cx = W/2, cy = H/2;
   const label = (s)=> (s||"").length>MAX_LABEL ? s.slice(0,MAX_LABEL-1)+"…" : (s||"");
-  const halfW = (s)=> Math.max(24, label(s).length*3.1 + 8);  // label half-width
+  const halfW = (s)=> Math.max(24, label(s).length*3.1 + 8);
   const nodes = graph.nodes.map(n=>{
     if(n.id===selfId) return {...n, x:cx, y:cy, fixed:true};
-    const k = others.indexOf(n);
-    const ring = k % rings;
+    const k = others.indexOf(n), ring = k % rings;
     const a = (k/Math.max(1,others.length))*Math.PI*2 - Math.PI/2;
-    const base = n.type==="organization" ? 96 : 150 + ring*118;
+    const base = n.type==="organization" ? 92 : 148 + ring*112;
     return {...n, x:cx+Math.cos(a)*base*(W/H)*0.78, y:cy+Math.sin(a)*base*0.72};
   });
-
   for(let pass=0; pass<160; pass++){
     for(const a of nodes){
       if(a.fixed) continue;
       for(const b of nodes){
         if(a===b) continue;
         const needX = halfW(a.label)+halfW(b.label)+10, needY = 30;
-        const dx = a.x-b.x, dy = a.y-b.y;
-        if(Math.abs(dx) < needX && Math.abs(dy) < needY){
-          const pushX = (needX-Math.abs(dx))*0.22*(dx<0?-1:1);
-          const pushY = (needY-Math.abs(dy))*0.5*(dy<0?-1:1);
-          if(Math.abs(dx)/needX > Math.abs(dy)/needY) a.x += pushX; else a.y += pushY;
+        const dx=a.x-b.x, dy=a.y-b.y;
+        if(Math.abs(dx)<needX && Math.abs(dy)<needY){
+          if(Math.abs(dx)/needX > Math.abs(dy)/needY) a.x += (needX-Math.abs(dx))*0.22*(dx<0?-1:1);
+          else a.y += (needY-Math.abs(dy))*0.5*(dy<0?-1:1);
         }
       }
       a.x = Math.max(halfW(a.label)+6, Math.min(W-halfW(a.label)-6, a.x));
       a.y = Math.max(24, Math.min(H-14, a.y));
     }
   }
-
   const byId = Object.fromEntries(nodes.map(n=>[n.id,n]));
   const edges = graph.edges.map(e=>{
-    const a=byId[e.from], b=byId[e.to];
-    if(!a||!b) return "";
-    const cls = e.type==="coauthor" ? "edge" : "edge org";
-    const title = e.type==="coauthor"
-      ? `${e.shared_publications} shared publication(s)` : esc(e.type);
-    return `<line class="${cls}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"><title>${title}</title></line>`;
+    const a=byId[e.from], b=byId[e.to]; if(!a||!b) return "";
+    const t = e.type==="coauthor" ? `${e.shared_publications} shared publication(s)` : esc(e.type);
+    return `<line class="edge${e.type==="coauthor"?"":" org"}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"><title>${t}</title></line>`;
   }).join("");
   const marks = nodes.map(n=>{
-    const text = esc(label(n.label));
-    const dy = n.y < cy ? -12 : 18;  // label above upper nodes, below lower ones
+    const text = esc(label(n.label)), dy = n.y<cy ? -11 : 17;
     if(n.type==="organization")
-      return `<g><rect class="n-org" x="${n.x-6}" y="${n.y-6}" width="12" height="12"><title>${esc(n.label)}</title></rect>
+      return `<g><rect class="n-org" x="${n.x-5}" y="${n.y-5}" width="10" height="10" rx="2"><title>${esc(n.label)}</title></rect>
         <text x="${n.x}" y="${n.y+dy}" text-anchor="middle">${text}</text></g>`;
     const cls = n.id===selfId ? "n-person n-self" : "n-person";
-    const click = n.id===selfId ? "" : ` onclick="location.hash='#/person/${n.id}'"`;
-    return `<g${click}><circle class="${cls}" cx="${n.x}" cy="${n.y}" r="${n.id===selfId?9:6}"><title>${esc(n.label)}</title></circle>
+    const click = n.id===selfId ? "" : ` onclick="location.hash='#/person/${n.id}'" style="cursor:pointer"`;
+    return `<g${click}><circle class="${cls}" cx="${n.x}" cy="${n.y}" r="${n.id===selfId?8:5.5}"><title>${esc(n.label)}</title></circle>
       <text x="${n.x}" y="${n.y+dy}" text-anchor="middle">${text}</text></g>`;
   }).join("");
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.innerHTML = edges + marks;
 }
 
-/* ---------- review ---------- */
+/* ---------------- review ---------------- */
 async function renderReview(){
-  setNav("#/review");
-  app.innerHTML = `<div class="loading">pulling the review ledger…</div>`;
-  const r = await api("/v1/review/merges");
-  const dup = r.possible_duplicates||[];
-  const fuz = r.fuzzy_merges||[];
-  app.innerHTML = `
-    <section class="block"><h4>Possible duplicates · ${dup.length}</h4>
-      ${dup.length? dup.map(d=>`<div class="conflict">
-        <div class="vs"><span><a href="#/person/${d.person_id}">${esc(d.person_name)}</a></span>
-        <span class="m">≟</span><span><a href="#/person/${d.duplicate_person_id}">${esc(d.duplicate_person_name)}</a></span></div>
-        <div class="src">${esc(d.signals?.reason||"score "+d.score)}</div>
-        <div style="margin-top:8px">
-          <button class="btn" onclick="act('/v1/review/duplicates/${d.candidate_id}/merge')">Merge</button>
-          <button class="btn danger" onclick="act('/v1/review/duplicates/${d.candidate_id}/reject')">Distinct people</button>
-        </div></div>`).join("") : `<div class="empty">No duplicates await judgement.</div>`}</section>
-    <section class="block"><h4>Fuzzy merges awaiting confirmation · ${fuz.length}</h4>
-      ${fuz.length? fuz.map(f=>`<div class="conflict">
-        <div><a href="#/person/${f.person_id}">${esc(f.person_name)}</a> ← ${esc(f.source)}:${esc(f.external_id)} (${esc(f.record_name)})</div>
-        <div class="src">${esc(f.signals?.reason||f.match_method)}</div>
-        <div style="margin-top:8px">
-          <button class="btn" onclick="act('/v1/review/merges/${f.link_id}/approve')">Approve</button>
-          <button class="btn danger" onclick="act('/v1/review/merges/${f.link_id}/split')">Split</button>
-        </div></div>`).join("") : `<div class="empty">No merges await confirmation.</div>`}</section>`;
-}
-async function act(path){ await api(path,{method:"POST"}); renderReview(); }
+  shell("#/review", `<h1 class="title">Review queue</h1>
+    <div class="sub">Merges Seekr was not confident enough to make on its own. Every decision is reversible.</div>`,
+    `<div class="loading"><div class="spinner"></div>Loading queue…</div>`);
+  let r;
+  try{ r = await api("/v1/review/merges"); }
+  catch(e){ if(e.message!=="unauthorized") $("#page").innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
+  const dup = r.possible_duplicates||[], fuz = r.fuzzy_merges||[];
 
-/* ---------- health ---------- */
-async function renderHealth(){
-  setNav("#/health");
-  app.innerHTML = `<div class="loading">checking the stacks…</div>`;
-  const h = await api("/v1/health/sources");
-  app.innerHTML = `<section class="block"><h4>Source ledger</h4>
-    <table><tr><th>source</th><th>status</th><th style="text-align:right">runs</th><th>last finished</th></tr>
-    ${h.sources.map(s=>`<tr><td>${esc(s.source)}</td>
-      <td><span class="vstate ${s.status==="ok"?"corroborated":"unverified"}">${esc(s.status)}</span></td>
-      <td class="num">${s.runs}</td><td>${esc((s.last_finished_at||"").slice(0,16).replace("T"," "))}</td></tr>`).join("")}
-    </table></section>`;
+  $("#page").innerHTML = `
+    <section class="block"><h2>Possible duplicates <span class="n">${dup.length}</span></h2>
+      ${dup.length ? dup.map(d=>`<div class="conflict">
+        <div class="vs">
+          <div class="side"><b><a href="#/person/${d.person_id}">${esc(d.person_name)}</a></b></div>
+          <div class="mid">same person?</div>
+          <div class="side"><b><a href="#/person/${d.duplicate_person_id}">${esc(d.duplicate_person_name)}</a></b></div>
+        </div>
+        <div class="idline">${esc(d.signals?.reason||("score "+d.score))}</div>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn primary sm" onclick="act('/v1/review/duplicates/${d.candidate_id}/merge')">Merge</button>
+          <button class="btn danger sm" onclick="act('/v1/review/duplicates/${d.candidate_id}/reject')">Different people</button>
+        </div></div>`).join("")
+      : emptyState("Nothing to review", "No duplicate pairs are waiting.")}
+    </section>
+    <section class="block"><h2>Fuzzy merges awaiting confirmation <span class="n">${fuz.length}</span></h2>
+      ${fuz.length ? fuz.map(f=>`<div class="conflict">
+        <div><b><a href="#/person/${f.person_id}">${esc(f.person_name)}</a></b>
+          <span class="muted">← ${esc(f.source)}:${esc(f.external_id)} (${esc(f.record_name||"")})</span></div>
+        <div class="idline">${esc(f.signals?.reason||f.match_method)}</div>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn primary sm" onclick="act('/v1/review/merges/${f.link_id}/approve')">Approve</button>
+          <button class="btn danger sm" onclick="act('/v1/review/merges/${f.link_id}/split')">Split apart</button>
+        </div></div>`).join("")
+      : emptyState("All confirmed", "No fuzzy merges are waiting for a decision.")}
+    </section>`;
+}
+async function act(path){
+  try{ await api(path,{method:"POST"}); renderReview(); }
+  catch(e){ alert(e.message); }
 }
 
-function setNav(hash){
-  document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("active", a.getAttribute("href")===hash));
+/* ---------------- sources ---------------- */
+async function renderSources(){
+  shell("#/sources", `<h1 class="title">Sources</h1>
+    <div class="sub">Where the data comes from, and whether ingestion is healthy.</div>`,
+    `<div class="loading"><div class="spinner"></div>Loading…</div>`);
+  let facets, health, hooks;
+  try{
+    [facets, health, hooks] = await Promise.all([
+      api("/v1/facets?field=source"), api("/v1/health/sources"),
+      api("/v1/webhooks/health").catch(()=>null),
+    ]);
+  }catch(e){ if(e.message!=="unauthorized") $("#page").innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
+
+  const runs = {};
+  (health.sources||[]).forEach(s=>{
+    runs[s.source] = runs[s.source] || {ok:0, error:0, last:null};
+    runs[s.source][s.status==="ok"?"ok":"error"] += s.runs;
+    if(s.last_finished_at) runs[s.source].last = s.last_finished_at;
+  });
+
+  $("#page").innerHTML = `
+    <section class="block"><h2>Coverage</h2>
+      <div class="card"><div class="tablewrap"><table class="list">
+        <thead><tr><th>Source</th><th class="num">People</th><th class="num">Runs OK</th><th class="num">Failed</th><th>Last run</th></tr></thead>
+        <tbody>${facets.values.map(v=>{
+          const r = runs[v.value]||{ok:0,error:0,last:null};
+          return `<tr><td class="nm">${esc(v.value)}</td>
+            <td class="num">${fmt(v.people)}</td>
+            <td class="num">${fmt(r.ok)}</td>
+            <td class="num">${r.error?`<span style="color:var(--danger)">${fmt(r.error)}</span>`:"0"}</td>
+            <td class="muted">${esc((r.last||"").slice(0,16).replace("T"," "))||"—"}</td></tr>`;
+        }).join("")}</tbody>
+      </table></div></div></section>
+    ${hooks?`<section class="block"><h2>Webhook delivery</h2>
+      <div class="card"><div class="inner"><table class="data">
+        <tr><td>Active subscriptions</td><td class="num">${fmt(hooks.active_subscriptions)}</td></tr>
+        <tr><td>Pending</td><td class="num">${hooks.pending?`<span style="color:var(--warn)">${fmt(hooks.pending)}</span>`:"0"}</td></tr>
+        <tr><td>Delivered</td><td class="num">${fmt(hooks.delivered)}</td></tr>
+        <tr><td>Failed</td><td class="num">${hooks.failed?`<span style="color:var(--danger)">${fmt(hooks.failed)}</span>`:"0"}</td></tr>
+      </table>${hooks.pending?`<p class="muted" style="font-size:12.5px;margin-top:10px">Deliveries only send when <code>deliver-webhooks</code> runs.</p>`:""}
+      </div></div></section>`:""}`;
 }
+
+/* ---------------- router ---------------- */
 async function route(){
-  if(!token()) return renderToken();
+  if(!token()) return renderGate();
   const h = location.hash || "#/search";
   try{
     if(h.startsWith("#/person/")) await renderPerson(h.split("/")[2]);
     else if(h==="#/review") await renderReview();
-    else if(h==="#/health") await renderHealth();
+    else if(h==="#/sources") await renderSources();
     else await renderSearch();
-  }catch(e){ if(e.message!=="unauthorized") app.innerHTML = `<div class="warn">error: ${esc(e.message)}</div>`; }
+  }catch(e){
+    if(e.message!=="unauthorized"){
+      const page = $("#page");
+      if(page) page.innerHTML = `<div class="banner">${esc(e.message)}</div>`;
+    }
+  }
 }
 window.addEventListener("hashchange", route);
 route();
