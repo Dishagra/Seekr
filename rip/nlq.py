@@ -427,6 +427,24 @@ def _name_clauses(column, token: str):
     )
 
 
+def _could_be_a_name(token: str) -> bool:
+    """Could this word be part of a person's name, rather than a technology?
+
+    Rejects acronyms and product-style spellings — SaaS, PostgreSQL, GraphQL,
+    k8s — which name search would happily match against real surnames.
+    """
+    t = token.strip().lower()
+    if len(t) < 3 or t in ACRONYMS or t in STOPWORDS:
+        return False
+    if any(ch.isdigit() for ch in t):
+        return False
+    # CamelCase or an inner capital is product branding, not a surname
+    inner = token.strip()[1:]
+    if any(ch.isupper() for ch in inner):
+        return False
+    return token.strip().isalpha()
+
+
 def _looks_like_a_name(token: str) -> bool:
     """Acronyms are technologies, not surnames: AI, ML, UX, API, SQL."""
     return len(token) >= 4 and not token.isupper()
@@ -616,9 +634,12 @@ def _search_openalex(query: str, limit: int) -> list[dict]:
     # A one- or two-word query is a person's name far more often than a
     # subject, and works search answers it with whoever wrote a paper
     # mentioning the word — "sricharan" returned Justine S. Ko.
-    looks_like_a_name_query = len(query.split()) <= 2
-    order = (conn.search_authors, conn.search_authors_by_topic) if looks_like_a_name_query \
-        else (conn.search_authors_by_topic, conn.search_authors)
+    # Author-NAME search is only ever right for something that could BE a
+    # name. Asking it about "SaaS" returns people surnamed Saas, and about
+    # "Rust" people surnamed Rust — a whole page of confident nonsense.
+    name_ok = all(_could_be_a_name(t) for t in query.split()) and len(query.split()) <= 3
+    order = (conn.search_authors, conn.search_authors_by_topic) if name_ok \
+        else (conn.search_authors_by_topic,)
     candidates = []
     for search in order:
         candidates = [c for c in search(query, limit=limit)
@@ -885,6 +906,30 @@ NOT_A_PERSON = re.compile(
 )
 
 
+def _corroborated(profile, term: str) -> bool:
+    """Did the search term turn up anywhere beyond the username?
+
+    GitHub matches literal text against the login, so "AI researchers from
+    Stanford" reached github.com/Intelligence-Manifesto and Intelligence247 —
+    real people whose only connection to the query is the word in their
+    handle. A match has to show up in the bio, an employer, a place, a skill
+    or a project to count as evidence of anything.
+    """
+    words = [w for w in re.split(r"[^A-Za-z0-9+#.-]+", term.lower()) if len(w) > 2]
+    if not words:
+        return True
+    haystack = " ".join(
+        str(x).lower() for x in (
+            [profile.summary or "", profile.location or ""]
+            + list(profile.organizations or [])
+            + [e.value for e in (profile.evidence or [])]
+            + [getattr(pr, "name", "") for pr in (profile.projects or [])]
+            + [getattr(pr, "description", "") or "" for pr in (profile.projects or [])]
+        )
+    )
+    return any(w in haystack for w in words)
+
+
 def _looks_like_a_person(name: str | None) -> bool:
     """Filter index entities out of author search results."""
     if not name or len(name) > 60:
@@ -953,7 +998,15 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
     if to_fetch:
         def _pull(item: dict):
             try:
-                return item, get_connector(item["source"]).fetch(item["external_id"]), None
+                profile = get_connector(item["source"]).fetch(item["external_id"])
+                if not (profile.name or "").strip():
+                    raise ValueError("source returned a profile with no name")
+                if item["source"] == "github" and not _corroborated(profile, item.get("_term", "")):
+                    raise ValueError(
+                        f"{item['external_id']} matches '{item.get('_term')}' only in "
+                        "the username — no supporting evidence"
+                    )
+                return item, profile, None
             except Exception as exc:
                 if item.get("source") == "github" and "rate limit" in str(exc).lower():
                     _note_github_throttled()
@@ -1025,6 +1078,7 @@ def discovery_suggestions(
                 continue
             item["reason"] = f"live {source} search for '{search_for}'"
             item["ingest_command"] = f"rip.cli ingest {source} {item['external_id']}"
+            item["_term"] = search_for
             keep.append(item)
         if source == "github" and not _may_fetch_github(total_stored):
             # keep them as candidates to add, but do not spend the request
