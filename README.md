@@ -34,7 +34,7 @@ python3 -m venv .venv
 .venv/bin/python -m rip.cli ingest openalex A5110248343
 .venv/bin/python -m rip.cli ingest github torvalds
 
-# serve the read API (http://127.0.0.1:8000/docs, exploration UI at /ui)
+# serve everything — API at /docs, UI at /ui. Reads .env for API keys.
 .venv/bin/python -m rip.cli serve
 
 # keep data fresh (run from cron)
@@ -371,37 +371,68 @@ rip/
 tests/            resolution + ingestion tests (fixture-based, no network)
 ```
 
-## Deployment (Vercel)
+## Running the full build
 
-The read API deploys to Vercel as a FastAPI backend serving a bundled
-read-only SQLite snapshot (`data/rip.db`, raw payloads stripped, ~14MB).
-Ingestion stays local; redeploying ships fresh data:
+This is the version with every capability. One command:
+
+```bash
+.venv/bin/python -m rip.cli serve
+```
+
+It reads `.env` itself, prints what it is serving, and refuses to pretend:
+if the database is read-only it says so, and if `RIP_API_TOKEN` is unset it
+warns that the API is open. `--host 0.0.0.0` accepts connections from other
+machines; `--workers N` needs Postgres, because SQLite does not take
+concurrent writers.
+
+What "full" means, against the read-only snapshot described below:
+
+| | Full build | Bundled snapshot |
+|---|---|---|
+| People served | the whole graph (50,800+) | ~14,000 |
+| Live search | finds people **and keeps them** | finds them, cannot store them |
+| Corpus | grows with every query | fixed until redeployed |
+| Raw payloads | kept, so parsers can improve without re-crawling | stripped |
+| Background worker, webhooks | yes | no |
+| Request time | unbounded | capped by the platform |
+
+The graph is ~1.2 GB and grows. Any host that gives you a writable disk and
+a long-running process will serve it; a serverless platform generally will
+not.
+
+### Postgres
+
+SQLite is the default and is fine for one process. For several, or for a
+graph you keep writing to while serving:
+
+```bash
+export RIP_DATABASE_URL=postgresql+psycopg://user:pass@host/seekr
+.venv/bin/python -m rip.cli init-db
+.venv/bin/python scripts/migrate_to_postgres.py   # copies an existing SQLite graph
+```
+
+No code changes — every query in the codebase runs on both.
+
+## Deployment as a read-only snapshot (optional)
+
+A cut-down copy can be served from a platform with a read-only filesystem
+(this repo carries a Vercel entrypoint at `api/index.py`). It is a demo of
+the read API, not the product: the snapshot is capped at 100 MB, which is
+roughly 14,000 people, and nothing found live can be kept.
 
 ```bash
 .venv/bin/python scripts/build_snapshot.py   # never copy rip.db by hand
-vercel deploy         # preview
-vercel deploy --prod  # production (stable URL)
 ```
 
-`scripts/build_snapshot.py` is the only supported way to build the snapshot.
-It checkpoints the WAL, strips raw payloads, and forces
-`journal_mode=DELETE` — a WAL database **cannot be opened on a read-only
-filesystem**, so a hand-copied `rip.db` produces a deployment where every
-`/v1` route returns 500 ("unable to open database file"). The script refuses
-to emit a WAL file.
+`scripts/build_snapshot.py` is the only supported way to build it. It
+checkpoints the WAL, strips raw payloads and forces `journal_mode=DELETE` —
+a WAL database **cannot be opened on a read-only filesystem**, so a
+hand-copied `rip.db` produces a deployment where every `/v1` route returns
+500 ("unable to open database file"). The script refuses to emit a WAL file
+or a snapshot over the size limit.
 
-Normally you do not run any of this by hand: `scripts/nightly_refresh.sh`
-(cron, 03:00) refreshes stale sources, discovers and drains leads, builds the
-snapshot, deploys, and delivers webhooks.
-
-- `api/index.py` is the entrypoint; it points `RIP_DATABASE_URL` at the
-  snapshot in read-only mode.
-- Auth: set `RIP_API_TOKEN` (Vercel env var) — all `/v1` routes then require
-  `Authorization: Bearer <token>`. `/docs` stays open.
-- Vercel Deployment Protection is disabled for this project (the API carries
-  its own token auth).
-- To outgrow the snapshot model, point `RIP_DATABASE_URL` at a managed
-  Postgres and run ingestion as a worker/cron against it — no code changes.
+Responses from such a deployment carry `"storage": "read-only"`, and the UI
+says plainly that people found live are shown but not saved.
 
 ## Operations
 

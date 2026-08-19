@@ -10,6 +10,7 @@ Examples:
 """
 
 import argparse
+import pathlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -545,12 +546,58 @@ def cmd_worker(args) -> None:
 
 
 def cmd_serve(args) -> None:
+    """Serve the whole graph, writable, with every capability enabled."""
+    import os
+
     import uvicorn
 
-    uvicorn.run("rip.api:app", host=args.host, port=args.port, reload=False)
+    from .db import DB_URL, READ_ONLY
+
+    print(f"Seekr on http://{args.host}:{args.port}/ui")
+    print(f"  database  {DB_URL}{'  (READ-ONLY)' if READ_ONLY else ''}")
+    if READ_ONLY:
+        print("  ! live search can find people but cannot keep them")
+    print(f"  auth      {'bearer token required' if os.environ.get('RIP_API_TOKEN') else 'OPEN — set RIP_API_TOKEN'}")
+    missing = [v for v in ("GITHUB_TOKEN", "EXA_API_KEY") if not os.environ.get(v)]
+    if missing:
+        print(f"  note      not set: {', '.join(missing)}")
+    workers = max(1, int(getattr(args, "workers", 1) or 1))
+    if workers > 1 and DB_URL.startswith("sqlite"):
+        print("  ! SQLite does not take concurrent writers — using one worker")
+        workers = 1
+    uvicorn.run("rip.api:app", host=args.host, port=args.port,
+                workers=workers, reload=False)
+
+
+def load_env(path: str = ".env") -> int:
+    """Read .env into the environment without adding a dependency.
+
+    Every command needs the API keys, and requiring `set -a; source .env`
+    before each one is a step people forget — the symptom is a connector that
+    silently returns nothing. Values already in the environment win, so an
+    explicit VAR=... on the command line still overrides the file.
+    """
+    import os
+
+    loaded = 0
+    try:
+        text = pathlib.Path(path).read_text()
+    except OSError:
+        return 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+            loaded += 1
+    return loaded
 
 
 def main() -> None:
+    load_env()
     parser = argparse.ArgumentParser(prog="rip", description="Resource Intelligence Platform")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -648,9 +695,12 @@ def main() -> None:
     p_worker.add_argument("--no-enrich", action="store_true")
     p_worker.add_argument("--once", action="store_true", help="single pass then exit")
 
-    p_serve = sub.add_parser("serve", help="run the read API")
-    p_serve.add_argument("--host", default="127.0.0.1")
+    p_serve = sub.add_parser("serve", help="run the API and UI (full build)")
+    p_serve.add_argument("--host", default="127.0.0.1",
+                         help="0.0.0.0 to accept connections from other machines")
     p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.add_argument("--workers", type=int, default=1,
+                         help="worker processes; >1 needs Postgres, not SQLite")
 
     args = parser.parse_args()
     if args.command == "init-db":
