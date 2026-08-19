@@ -886,7 +886,7 @@ def nl_query(
             "organizations": parsed.organizations,
             "locations": parsed.locations,
             "countries": parsed.countries,
-            "name_terms": parsed.name_terms,
+            "name_terms": parsed.name_terms, "roles": parsed.roles,
             "limit": parsed.limit,
             "offset": parsed.offset,
         },
@@ -984,7 +984,7 @@ def nl_query(
             response["applied_filters"] = {
                 "skills": parsed.skills, "skill_patterns": parsed.skill_patterns,
                 "organizations": parsed.organizations, "locations": parsed.locations,
-                "countries": parsed.countries, "name_terms": parsed.name_terms,
+                "countries": parsed.countries, "name_terms": parsed.name_terms, "roles": parsed.roles,
                 "limit": parsed.limit, "offset": parsed.offset,
             }
         if mode == "queue":

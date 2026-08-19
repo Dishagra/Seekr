@@ -268,6 +268,11 @@ def _vocab(session: Session) -> tuple[dict, dict, dict]:
         v.lower(): v
         for (v,) in session.execute(select(Organization.name).distinct())
     }
+    # "deccan.ai" typed by a user must reach the record spelled "Deccan AI"
+    from .models import normalize_org_name
+
+    for (v,) in session.execute(select(Organization.name).distinct()):
+        orgs.setdefault(normalize_org_name(v), v)
     locations: dict[str, str] = {}
     for (loc,) in session.execute(
         select(Person.location).where(Person.location.isnot(None)).distinct()
@@ -734,10 +739,18 @@ def _filtered_stmt(parsed: NLQuery):
             Evidence.person_id == Person.id, or_(*clauses),
         )))
     if parsed.organizations:
+        from .models import normalize_org_name
+
+        wanted = {o.lower() for o in parsed.organizations}
+        norms = {normalize_org_name(o) for o in parsed.organizations if o}
         stmt = (
             stmt.join(Affiliation, Affiliation.person_id == Person.id)
             .join(Organization, Organization.id == Affiliation.organization_id)
-            .where(func.lower(Organization.name).in_([o.lower() for o in parsed.organizations]))
+            .where(
+                func.lower(Organization.name).in_(wanted)
+                # the same company under another spelling
+                | Organization.norm_name.in_(norms)
+            )
         )
     if parsed.countries:
         stmt = stmt.where(func.upper(Person.country).in_(parsed.countries))

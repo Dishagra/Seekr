@@ -803,3 +803,37 @@ def test_job_titles_are_matched_as_roles_not_topics(session):
     parsed = parse(session, "python community managers")
     assert parsed.roles == ["community manager"]
     assert [g["term"] for g in parsed.skill_groups] == ["python"]
+
+
+def test_one_organization_however_it_is_spelled(session):
+    """"Deccan.AI" and "Deccan AI" are one company, not two."""
+    from rip.ingest import ingest_profile
+    from rip.models import Organization, normalize_org_name
+    from rip.nlq import execute, parse
+    from rip.normalize import NormalizedProfile, OrgAffiliation
+    from sqlalchemy import select
+
+    def person(login, name, org, role):
+        return NormalizedProfile(
+            source="github", source_type="code", external_id=login,
+            url=f"https://github.com/{login}", raw={}, name=name,
+            organizations=[OrgAffiliation(name=org, role=role)],
+        )
+
+    ingest_profile(session, person("a", "Ann Pm", "Deccan AI", "Program Manager"))
+    ingest_profile(session, person("b", "Bo Pm", "Deccan.AI", "Program Manager"))
+    ingest_profile(session, person("c", "Cy Design", "deccan ai", "Product Designer"))
+
+    # one organization record, not three
+    orgs = session.execute(
+        select(Organization).where(Organization.norm_name == normalize_org_name("Deccan.AI"))
+    ).scalars().all()
+    assert len(orgs) == 1
+
+    # and either spelling reaches everyone
+    for spelling in ("deccan.ai", "Deccan AI"):
+        found = {p.canonical_name for p in execute(session, parse(session, f"people at {spelling}"))}
+        assert found == {"Ann Pm", "Bo Pm", "Cy Design"}, spelling
+
+    pms = {p.canonical_name for p in execute(session, parse(session, "program managers at deccan.ai"))}
+    assert pms == {"Ann Pm", "Bo Pm"}

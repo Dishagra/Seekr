@@ -69,6 +69,7 @@ def _migrate() -> None:
         "identity_link": [("review_state", "VARCHAR(32) DEFAULT 'unreviewed'")],
         "person": [("merged_into", "VARCHAR(36)"), ("country", "VARCHAR(2)")],
         "search_cache": [("person_ids", "TEXT")],
+        "organization": [("norm_name", "VARCHAR(255)")],
     }
     _backfill_name_tokens(inspector)
     for table, columns in additive.items():
@@ -79,6 +80,29 @@ def _migrate() -> None:
             if name not in existing:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+    # after the columns exist, not before: this fills one of them
+    _backfill_org_norm_names(inspect(engine))
+
+
+def _backfill_org_norm_names(inspector) -> None:
+    """Fill the organization identity key for rows created before it existed."""
+    from sqlalchemy import text
+
+    if "organization" not in inspector.get_table_names():
+        return
+    if "norm_name" not in {c["name"] for c in inspector.get_columns("organization")}:
+        return
+    from .models import normalize_org_name
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT id, name FROM organization WHERE norm_name IS NULL")
+        ).fetchall()
+        for oid, name in rows:
+            conn.execute(
+                text("UPDATE organization SET norm_name = :n WHERE id = :i"),
+                {"n": normalize_org_name(name), "i": oid},
+            )
 
 
 def _backfill_name_tokens(inspector) -> None:

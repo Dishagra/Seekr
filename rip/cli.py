@@ -405,6 +405,60 @@ def cmd_purge_nonpersons(args) -> None:
     session.commit()
 
 
+def cmd_merge_orgs(args) -> None:
+    """Fold organizations that are the same company spelled differently.
+
+    "Deccan.AI" and "Deccan AI" were separate records with separate people, so
+    searching one could not see the other. New records resolve on a normalized
+    key; this folds the ones created before that.
+    """
+    from collections import defaultdict
+
+    from sqlalchemy import delete, func, select, update
+
+    from .db import SessionLocal
+    from .models import Affiliation, Organization, normalize_org_name
+
+    session = SessionLocal()
+    groups = defaultdict(list)
+    for org in session.execute(select(Organization)).scalars():
+        groups[org.norm_name or normalize_org_name(org.name)].append(org)
+    dupes = {k: v for k, v in groups.items() if k and len(v) > 1}
+    print(f"{len(dupes)} organizations exist under more than one spelling")
+    for key, orgs in list(dupes.items())[:15]:
+        print(f"   {key}: " + ", ".join(repr(o.name) for o in orgs))
+    if len(dupes) > 15:
+        print(f"   ... and {len(dupes) - 15} more")
+    if not dupes or not getattr(args, "yes", False):
+        if dupes:
+            print("\nre-run with --yes to merge them")
+        return
+
+    def _uses(org) -> int:
+        return session.scalar(
+            select(func.count()).select_from(Affiliation)
+            .where(Affiliation.organization_id == org.id)
+        ) or 0
+
+    merged = 0
+    for orgs in dupes.values():
+        # Keep the spelling most sources used. Longest-name lost "Google" to
+        # "Google Inc.", which is not what anyone calls it.
+        keeper = max(orgs, key=lambda o: (_uses(o), -len(o.name or ""), -o.id))
+        for other in orgs:
+            if other.id == keeper.id:
+                continue
+            session.execute(
+                update(Affiliation)
+                .where(Affiliation.organization_id == other.id)
+                .values(organization_id=keeper.id)
+            )
+            session.execute(delete(Organization).where(Organization.id == other.id))
+            merged += 1
+    session.commit()
+    print(f"merged {merged} duplicate organization records")
+
+
 def cmd_check_db(args) -> None:
     """Print engine, journal mode, credentials and queue depths."""
     import os
@@ -579,6 +633,10 @@ def main() -> None:
 
     sub.add_parser("check-db", help="engine, journal mode, queue depths, credentials")
 
+    p_orgs = sub.add_parser("merge-orgs",
+                            help="fold organizations that are one company spelled two ways")
+    p_orgs.add_argument("--yes", action="store_true", help="actually merge; otherwise dry-run")
+
     p_purge = sub.add_parser("purge-nonpersons",
                              help="remove index entities stored as people (labs, conferences)")
     p_purge.add_argument("--yes", action="store_true", help="actually delete; otherwise dry-run")
@@ -630,6 +688,8 @@ def main() -> None:
         cmd_check_db(args)
     elif args.command == "purge-nonpersons":
         cmd_purge_nonpersons(args)
+    elif args.command == "merge-orgs":
+        cmd_merge_orgs(args)
     elif args.command == "worker":
         cmd_worker(args)
     elif args.command == "serve":

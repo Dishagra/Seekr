@@ -215,11 +215,25 @@ def _add_evidence(
 
 
 def _get_or_create_org(session: Session, name: str, org_type: str | None, url: str | None) -> Organization:
-    org = session.execute(select(Organization).where(Organization.name == name)).scalar_one_or_none()
+    """One organization per company, however the source spelled it."""
+    from .models import normalize_org_name
+
+    norm = normalize_org_name(name)
+    org = None
+    if norm:
+        org = session.execute(
+            select(Organization).where(Organization.norm_name == norm)
+        ).scalars().first()
     if org is None:
-        org = Organization(name=name, org_type=org_type, website=url)
+        org = session.execute(
+            select(Organization).where(Organization.name == name)
+        ).scalar_one_or_none()
+    if org is None:
+        org = Organization(name=name, norm_name=norm, org_type=org_type, website=url)
         session.add(org)
         session.flush()
+    elif not org.norm_name:
+        org.norm_name = norm
     return org
 
 

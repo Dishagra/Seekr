@@ -146,12 +146,34 @@ class Evidence(Base):
     person: Mapped[Person] = relationship(back_populates="evidence")
 
 
+def normalize_org_name(name: str) -> str:
+    """The key two spellings of the same company share.
+
+    "Deccan.AI" and "Deccan AI" were two organizations with two separate sets
+    of people, so a search for one could not see the other. Punctuation and
+    legal suffixes carry no identity; the words do.
+    """
+    import re as _re
+
+    text = _re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+    words = [w for w in text.split() if w not in _ORG_SUFFIXES]
+    return " ".join(words or text.split())
+
+
+_ORG_SUFFIXES = {
+    "inc", "llc", "ltd", "limited", "pvt", "private", "corp", "corporation",
+    "gmbh", "co", "plc", "sa", "bv", "ag", "llp", "lp",
+}
+
+
 class Organization(Base):
     __tablename__ = "organization"
     __table_args__ = (UniqueConstraint("name", name="uq_org_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), index=True)
+    # identity, as opposed to spelling: "Deccan.AI" and "Deccan AI" share it
+    norm_name: Mapped[str | None] = mapped_column(String(255), index=True)
     org_type: Mapped[str | None] = mapped_column(String(64))  # "company" | "university" | ...
     website: Mapped[str | None] = mapped_column(String(1024))
     location: Mapped[str | None] = mapped_column(String(255))
