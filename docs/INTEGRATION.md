@@ -193,6 +193,16 @@ request:
 | `true` | also returns `discovery_suggestions` from live searches across OpenAlex, Semantic Scholar and dblp; nothing is stored |
 | `queue` | same, plus each suggestion is added to the discovery-lead queue and `queued_leads` reports how many; a worker ingests them later under the normal rate limits |
 
+`true` and `queue` both **store** any result that arrived with a full person
+payload, and report the count as `stored_from_live`. Those people are then
+returned as ordinary results and are answerable from the graph afterwards; the
+same query will not be bought again for 30 days. `discover=false` (the default)
+remains strictly read-only.
+
+When filters combine to zero, `empty_reason` names the filter responsible —
+e.g. *"Dropping skills (growth) would return 2"* — so an empty result set is
+diagnosable rather than mysterious.
+
 Suggestions carry `source`, `external_id`, `name`, `reason` and an
 `ingest_command`. They are candidates, not results, and are not ranked.
 

@@ -235,6 +235,25 @@ never hidden, and `exa` is tried **last** in live discovery so the free
 scholarly sources answer first and you only spend money when they cannot.
 Decide your lawful basis and retention policy before ingesting at volume.
 
+### Live search feeds the graph (pay once, not per query)
+
+When a live provider returns a whole person record — Exa does — that record is
+ingested immediately. The data is already bought; discarding it would mean
+paying for the same people again next week. Two consequences:
+
+- results appear as ordinary search results, not just as suggestions, because
+  the query is re-parsed after storing (a company we had never heard of is a
+  real filter once its people are in the graph)
+- a `search_cache` row records each provider/query pair, so repeating a query
+  within `SEEKR_SEARCH_TTL_DAYS` (default 30) skips the paid call entirely
+
+Keyed on your original query, not the leftover words — otherwise storing new
+people changes the residual string and the same request bills twice.
+
+Providers that return only an identifier (OpenAlex, Semantic Scholar, dblp)
+still yield suggestions you queue explicitly; they are free, so there is
+nothing to save.
+
 ### Web search and page rendering (free tiers)
 
 These are infrastructure, not people sources: they find URLs and fetch pages.

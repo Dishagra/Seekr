@@ -605,7 +605,9 @@ function renderResults(data, opts={}){
       data.explanation || "None of those terms exist in the corpus yet.",
       !opts.discover ? `<button class="btn primary" onclick="runQuery('true')">Search live sources</button>` : "");
   } else if(!sugg.length){
-    main = emptyState("No matches", "No one in the corpus matches these filters.",
+    const why = data.empty_reason;
+    main = emptyState("No matches",
+      why ? why.message : "No one in the corpus matches these filters.",
       !opts.discover ? `<button class="btn primary" onclick="runQuery('true')">Search live sources</button>` : "");
   } else { main = ""; }
 

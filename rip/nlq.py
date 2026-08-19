@@ -9,6 +9,8 @@ The vocabulary is built from the live corpus (skill/interest values, org
 names, locations) rather than hardcoded gazetteers, so it grows with the data.
 """
 
+import logging
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -17,6 +19,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .models import Evidence, Organization, Person
+
+logger = logging.getLogger("rip.nlq")
 
 STOPWORDS = {
     "a", "an", "and", "at", "expert", "experts", "engineer", "engineers", "find",
@@ -252,6 +256,45 @@ def count_matches(session: Session, parsed: NLQuery) -> int:
     return session.execute(select(func.count()).select_from(inner)).scalar_one()
 
 
+FILTER_GROUPS = ("skills", "organizations", "locations", "countries", "name_terms")
+
+
+def diagnose_empty(session: Session, parsed: NLQuery) -> dict | None:
+    """When filters combine to nothing, say which one is responsible.
+
+    Every filter can be individually reasonable while the intersection is
+    empty — "growth" matches an economics topic, "Zomato" matches employers,
+    and nobody is both. Reporting a bare 0 makes that look like a fault.
+    """
+    from dataclasses import replace
+
+    active = [g for g in FILTER_GROUPS
+              if getattr(parsed, g) or (g == "skills" and parsed.skill_patterns)]
+    if len(active) < 2:
+        return None
+    for group in active:
+        relaxed = replace(parsed)
+        setattr(relaxed, group, [])
+        if group == "skills":
+            relaxed.skill_patterns = []
+        if not has_filters(relaxed):
+            continue
+        n = count_matches(session, relaxed)
+        if n:
+            dropped = getattr(parsed, group) or parsed.skill_patterns
+            return {
+                "filter": group,
+                "values": list(dropped),
+                "would_match": n,
+                "message": (
+                    f"No one matches every filter at once. Dropping "
+                    f"{group.replace('_', ' ')} ({', '.join(map(str, dropped))}) "
+                    f"would return {n:,}."
+                ),
+            }
+    return None
+
+
 def execute(session: Session, parsed: NLQuery) -> list[Person]:
     """Apply the parsed filters. No ranking: DB order, one page at a time.
 
@@ -324,6 +367,10 @@ def _search_exa(query: str, limit: int) -> list[dict]:
             "role": c.get("role"),
             "location": c.get("location"),
             "works_count": None,
+            # the full person payload we already paid for — ingesting it costs
+            # nothing more, and means this query is answered locally next time
+            "_raw": c.get("raw"),
+            "_connector": "exa",
         }
         for c in get_connector("exa").search_people(query, limit=limit)
     ]
@@ -346,17 +393,97 @@ def _search_dblp(query: str, limit: int) -> list[dict]:
 
 
 # tried in order; later sources only run if earlier ones found nothing useful
+# (name, fn, uses_full_query). Author-name lookups want just the leftover
+# terms; a semantic people search wants the whole question, because stripping
+# "engineers at ... in Bengaluru" throws away the very context it matches on.
 SUGGESTION_SEARCHERS = (
-    ("openalex", _search_openalex),
-    ("semanticscholar", _search_semanticscholar),
-    ("dblp", _search_dblp),
+    ("openalex", _search_openalex, False),
+    ("semanticscholar", _search_semanticscholar, False),
+    ("dblp", _search_dblp, False),
     # paid, and the only source that reaches non-academic roles: tried last
-    ("exa", _search_exa),
+    ("exa", _search_exa, True),
 )
 MIN_USEFUL_SUGGESTIONS = 3
 
 
-def discovery_suggestions(parsed: NLQuery, limit: int = 10) -> list[dict]:
+SEARCH_TTL_DAYS = int(os.environ.get("SEEKR_SEARCH_TTL_DAYS", "30"))
+
+
+def _norm_query(q: str) -> str:
+    return " ".join(sorted(re.findall(r"[a-z0-9]+", q.lower())))[:512]
+
+
+def _cache_lookup(session: Session, provider: str, query: str):
+    """The cache row for this query if it is still fresh, else None."""
+    from datetime import datetime, timedelta, timezone
+
+    from .models import SearchCache
+
+    row = session.execute(
+        select(SearchCache).where(
+            SearchCache.provider == provider,
+            SearchCache.query_norm == _norm_query(query),
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    age = datetime.now(timezone.utc) - row.ran_at.replace(tzinfo=timezone.utc)
+    return row if age < timedelta(days=SEARCH_TTL_DAYS) else None
+
+
+def _cache_record(session: Session, provider: str, query: str, found: int, stored: int) -> None:
+    from datetime import datetime, timezone
+
+    from .models import SearchCache
+
+    row = session.execute(
+        select(SearchCache).where(
+            SearchCache.provider == provider,
+            SearchCache.query_norm == _norm_query(query),
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        row = SearchCache(provider=provider, query_norm=_norm_query(query), query_raw=query[:512])
+        session.add(row)
+    row.result_count, row.stored_count = found, stored
+    row.ran_at = datetime.now(timezone.utc)
+    session.commit()
+
+
+def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
+    """Ingest live results that arrived with a full payload.
+
+    Only applies to providers that return the whole person record in their
+    search response (Exa). Storing it costs no extra API call — the data is
+    already bought — and it means the next identical query is answered from
+    the graph instead of the provider.
+    """
+    from .connectors import get_connector
+    from .ingest import ingest_profile
+
+    stored = 0
+    for item in suggestions:
+        raw, source = item.get("_raw"), item.get("_connector")
+        if not raw or not source:
+            continue
+        try:
+            profile = get_connector(source).normalize(raw)
+            ingest_profile(session, profile)
+            item["stored"] = True
+            stored += 1
+        except Exception as exc:
+            # surfaced on the item so a caller can see the record was found
+            # but not kept, rather than it vanishing silently
+            item["stored"] = False
+            item["store_error"] = f"{type(exc).__name__}: {exc}"
+            logger.warning("could not persist %s result: %s", source, exc)
+            session.rollback()
+    return stored
+
+
+def discovery_suggestions(
+    session: Session | None = None, parsed: NLQuery = None, limit: int = 10
+) -> list[dict]:
     """Live author search across sources for terms the local corpus lacks.
 
     Returns SUGGESTIONS only — nothing is ingested here. Sources are tried in
@@ -370,21 +497,37 @@ def discovery_suggestions(parsed: NLQuery, limit: int = 10) -> list[dict]:
     query = " ".join(terms).strip()
     if not query:
         return []
+    # stable across vocabulary changes, unlike the derived `query`
+    cache_key = (parsed.raw or query).strip()
 
     out: list[dict] = []
-    for source, searcher in SUGGESTION_SEARCHERS:
+    for source, searcher, uses_full_query in SUGGESTION_SEARCHERS:
         if len(out) >= MIN_USEFUL_SUGGESTIONS:
             break
+        # Already bought this answer recently? The people are in the graph, so
+        # do not pay for it again. Keyed on the USER'S query, not the derived
+        # search string: once new people are stored the residual string
+        # changes, and keying on that would bill for the same request twice.
+        if session is not None and _cache_lookup(session, source, cache_key):
+            continue
         try:
-            found = searcher(query, limit)
+            found = searcher(cache_key if uses_full_query else query, limit)
         except Exception:
             continue  # a throttled or unavailable source is not a query failure
+        keep = []
         for item in found:
             if not item.get("external_id"):
                 continue
-            item["reason"] = f"live {source} author search for '{query}'"
+            item["reason"] = (
+                f"live {source} search for "
+                f"'{cache_key if uses_full_query else query}'"
+            )
             item["ingest_command"] = f"rip.cli ingest {source} {item['external_id']}"
-            out.append(item)
+            keep.append(item)
+        stored = persist_suggestions(session, keep) if session is not None else 0
+        if session is not None:
+            _cache_record(session, source, cache_key, len(keep), stored)
+        out.extend(keep)
     return out[: limit * 2]
 
 

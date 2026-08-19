@@ -164,6 +164,9 @@ def _patch_sources(monkeypatch, openalex=None, s2=None, dblp=None, fail=()):
         "dblp": _FakeSearcher(dblp or [], calls, "dblp", "dblp" in fail),
     }
     monkeypatch.setattr("rip.connectors.get_connector", lambda s: registry[s])
+    monkeypatch.setattr("rip.nlq.SUGGESTION_SEARCHERS", tuple(
+        (n, f, u) for (n, f, u) in __import__("rip.nlq", fromlist=["x"]).SUGGESTION_SEARCHERS
+        if n != "exa"))
     return calls
 
 
@@ -451,3 +454,109 @@ def test_preposition_phrases_do_not_hijack_skills(session):
     parsed = parse(session, "machine learning researchers in India")
     assert parsed.countries == ["IN"]
     assert "Social and Economic Development in India" not in parsed.skills
+
+
+class _FullPayloadSearcher:
+    """A provider that returns whole person records, like Exa does."""
+
+    def __init__(self, calls):
+        self._calls = calls
+
+    def normalize(self, raw):
+        from rip.connectors.exa import ExaConnector
+
+        return ExaConnector.normalize(ExaConnector.__new__(ExaConnector), raw)
+
+    def search_people(self, query, limit=10):
+        self._calls.append(query)
+        return [{
+            "id": "px1", "name": "Nadia Rahman", "affiliation": "Zeta Corp",
+            "role": "Growth Lead", "location": "Lisbon, Portugal",
+            "raw": {
+                "id": "https://exa.ai/library/person/px1",
+                "url": "https://linkedin.com/in/nadia",
+                "title": "Nadia Rahman",
+                "text": "# Nadia Rahman\n\nGrowth Lead at Zeta Corp\n\nLisbon, Portugal (PT)\n",
+                "entities": [{
+                    "id": "https://exa.ai/library/person/px1", "type": "person",
+                    "properties": {"name": "Nadia Rahman", "location": "Lisbon, Portugal",
+                                   "workHistory": [{"title": "Growth Lead",
+                                                    "company": {"name": "Zeta Corp"}}],
+                                   "educationHistory": []},
+                }],
+            },
+        }]
+
+
+def test_paid_results_are_stored_so_the_next_query_is_free(session, monkeypatch):
+    """A provider that returns full records should never be paid for twice."""
+    from rip.api import nl_query
+    from rip.models import Person, SearchCache
+
+    calls = []
+    monkeypatch.setenv("EXA_API_KEY", "k")
+    monkeypatch.setattr("rip.connectors.get_connector", lambda s: _FullPayloadSearcher(calls))
+    monkeypatch.setattr("rip.nlq.SUGGESTION_SEARCHERS",
+                        (("exa", __import__("rip.nlq", fromlist=["x"])._search_exa, True),))
+
+    first = nl_query(q="growth leads at Zeta Corp", discover="true", db=session)
+    assert first["stored_from_live"] == 1
+    assert len(calls) == 1
+    assert session.query(Person).filter_by(canonical_name="Nadia Rahman").count() == 1
+    # the freshly stored person is returned as a result, not just a suggestion
+    assert any(r["canonical_name"] == "Nadia Rahman" for r in first["results"])
+
+    second = nl_query(q="growth leads at Zeta Corp", discover="true", db=session)
+    assert len(calls) == 1          # provider not queried again
+    assert second["stored_from_live"] == 0
+    cache = session.query(SearchCache).filter_by(provider="exa").one()
+    assert cache.result_count == 1 and cache.stored_count == 1
+
+
+def test_cache_expires_after_the_ttl(session, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import rip.nlq as nlq
+    from rip.models import SearchCache
+
+    nlq._cache_record(session, "exa", "some query", 3, 3)
+    assert nlq._cache_lookup(session, "exa", "some query") is not None
+    row = session.query(SearchCache).one()
+    row.ran_at = datetime.now(timezone.utc) - timedelta(days=nlq.SEARCH_TTL_DAYS + 1)
+    session.commit()
+    assert nlq._cache_lookup(session, "exa", "some query") is None
+
+
+def test_query_normalisation_ignores_word_order(session):
+    import rip.nlq as nlq
+
+    assert nlq._norm_query("growth leads at Zeta") == nlq._norm_query("Zeta growth at leads")
+
+
+def test_empty_result_names_the_filter_responsible(session):
+    from rip.nlq import diagnose_empty
+    from rip.normalize import EvidenceItem, OrgAffiliation
+
+    ingest_profile(
+        session,
+        make_profile(name="Ann Fields", organizations=[OrgAffiliation(name="Zomato")]),
+    )
+    ingest_profile(
+        session,
+        make_profile(external_id="b", url="https://github.com/b", raw={"login": "b"},
+                     name="Bo Chen", usernames=["github:b"],
+                     evidence=[EvidenceItem(attribute_type="skill", value="Economic Growth")]),
+    )
+    parsed = parse(session, "growth people at Zomato")
+    assert execute(session, parsed) == []
+    why = diagnose_empty(session, parsed)
+    assert why and why["would_match"] >= 1
+    assert "Dropping" in why["message"]
+
+
+def test_no_diagnosis_when_only_one_filter(session):
+    from rip.nlq import diagnose_empty
+
+    seed(session)
+    parsed = parse(session, "Zzznothing")
+    assert diagnose_empty(session, parsed) is None

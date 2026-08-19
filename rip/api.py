@@ -735,7 +735,7 @@ def nl_query(
     worker ingests them later. Neither mode ingests during the request.
     Suggestions are not results and are not ranked.
     """
-    from .nlq import count_matches, execute, has_filters, parse
+    from .nlq import count_matches, diagnose_empty, execute, has_filters, parse
 
     # tolerate direct calls (tests) where FastAPI has not resolved the params
     limit = limit if isinstance(limit, int) else 0
@@ -747,50 +747,53 @@ def nl_query(
     persons = execute(db, parsed)
     matched_nothing = not has_filters(parsed)
     total = count_matches(db, parsed)
-    # attach a small evidence-count attribute sample per result for display
-    ids = [p.id for p in persons]
-    attr_map: dict = {pid: {} for pid in ids}
-    org_map: dict = {pid: [] for pid in ids}
-    if ids:
-        rows = db.execute(
-            select(Evidence.person_id, Evidence.attribute_type, Evidence.value,
-                   Evidence.source)
-            .where(Evidence.person_id.in_(ids),
-                   Evidence.attribute_type.in_(["skill", "research_interest"]))
-        ).all()
-        for pid, at, val, src in rows:
-            entry = attr_map[pid].setdefault(
-                (at, val),
-                {"attribute_type": at, "value": val, "evidence_count": 0, "sources": set()},
-            )
-            entry["evidence_count"] += 1
-            if src:
-                entry["sources"].add(src)
-        # every affiliation, so a caller can see WHICH one matched an org filter
-        for pid, org_name in db.execute(
-            select(Affiliation.person_id, Organization.name)
-            .join(Organization, Organization.id == Affiliation.organization_id)
-            .where(Affiliation.person_id.in_(ids))
-        ).all():
-            if org_name not in org_map[pid]:
-                org_map[pid].append(org_name)
+    def build_results(rows):
+        """Summaries plus a small evidence-count attribute sample per person."""
+        ids = [r.id for r in rows]
+        attr_map: dict = {pid: {} for pid in ids}
+        org_map: dict = {pid: [] for pid in ids}
+        if ids:
+            for pid, at, val, src in db.execute(
+                select(Evidence.person_id, Evidence.attribute_type, Evidence.value,
+                       Evidence.source)
+                .where(Evidence.person_id.in_(ids),
+                       Evidence.attribute_type.in_(["skill", "research_interest"]))
+            ).all():
+                entry = attr_map[pid].setdefault(
+                    (at, val),
+                    {"attribute_type": at, "value": val, "evidence_count": 0, "sources": set()},
+                )
+                entry["evidence_count"] += 1
+                if src:
+                    entry["sources"].add(src)
+            for pid, org_name in db.execute(
+                select(Affiliation.person_id, Organization.name)
+                .join(Organization, Organization.id == Affiliation.organization_id)
+                .where(Affiliation.person_id.in_(ids))
+            ).all():
+                if org_name not in org_map[pid]:
+                    org_map[pid].append(org_name)
 
-    wanted_orgs = {o.lower() for o in parsed.organizations}
-    results = []
-    for p in persons:
-        summary = _person_summary(p)
-        attrs = [
-            {**a, "sources": sorted(a["sources"])}
-            for a in attr_map.get(p.id, {}).values()
-        ]
-        summary["attributes"] = sorted(attrs, key=lambda a: -a["evidence_count"])[:6]
-        summary["organizations"] = org_map.get(p.id, [])
-        # the affiliation that satisfied the org filter — often NOT the current
-        # one, so showing only current_organization looks like a wrong match
-        summary["matched_organization"] = next(
-            (o for o in summary["organizations"] if o.lower() in wanted_orgs), None
-        )
-        results.append(summary)
+        wanted_orgs = {o.lower() for o in parsed.organizations}
+        out = []
+        for person in rows:
+            summary = _person_summary(person)
+            attrs = [
+                {**a, "sources": sorted(a["sources"])}
+                for a in attr_map.get(person.id, {}).values()
+            ]
+            summary["attributes"] = sorted(attrs, key=lambda a: -a["evidence_count"])[:6]
+            summary["organizations"] = org_map.get(person.id, [])
+            # the affiliation that satisfied the org filter — often NOT the
+            # current one, so showing only current_organization looks wrong
+            summary["matched_organization"] = next(
+                (o for o in summary["organizations"] if o.lower() in wanted_orgs), None
+            )
+            out.append(summary)
+        return out
+
+    results = build_results(persons)
+
     response = {
         "query": q,
         "applied_filters": {
@@ -820,16 +823,45 @@ def nl_query(
             if matched_nothing
             else None
         ),
-        "discover_available": bool(
-            not persons or len(parsed.unmatched_terms) >= 2
-        ),
+        "empty_reason": (diagnose_empty(db, parsed) if (not persons and not matched_nothing) else None),
+        # worth going live whenever the corpus could not answer fully: no
+        # results at all, or a constraint we had to drop
+        "discover_available": bool(not persons or parsed.unmatched_terms),
     }
     mode = str(discover).lower()
     if mode in ("true", "queue", "1") and response["discover_available"]:
         from .nlq import discovery_suggestions, queue_suggestions
 
-        suggestions = discovery_suggestions(parsed)
+        # Live results are persisted when the provider returned a full person
+        # payload: we already paid for that data, so keeping it means the same
+        # query is answered from the graph next time instead of being re-bought.
+        suggestions = discovery_suggestions(db, parsed)
+        stored = sum(1 for s in suggestions if s.get("stored"))
+        for s in suggestions:
+            s.pop("_raw", None)
+            s.pop("_connector", None)
         response["discovery_suggestions"] = suggestions
+        response["stored_from_live"] = stored
+        if stored:
+            # The corpus just grew, and so did the vocabulary: terms that were
+            # unmatched a moment ago (a company name we had never seen) are now
+            # real filters. Re-parse before re-running, or the people we just
+            # stored stay invisible to the very query that fetched them.
+            parsed = parse(db, q)
+            if limit:
+                parsed.limit = limit
+            parsed.offset = offset
+            persons = execute(db, parsed)
+            response["results"] = build_results(persons)
+            response["count"] = len(persons)
+            response["total_matches"] = count_matches(db, parsed)
+            response["unmatched_terms"] = parsed.unmatched_terms
+            response["applied_filters"] = {
+                "skills": parsed.skills, "skill_patterns": parsed.skill_patterns,
+                "organizations": parsed.organizations, "locations": parsed.locations,
+                "countries": parsed.countries, "name_terms": parsed.name_terms,
+                "limit": parsed.limit, "offset": parsed.offset,
+            }
         if mode == "queue":
             response["queued_leads"] = queue_suggestions(db, suggestions, q)
     return response

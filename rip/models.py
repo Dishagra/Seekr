@@ -343,6 +343,27 @@ class DiscoveryLead(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class SearchCache(Base):
+    """One live-search call we already paid for.
+
+    Before querying a metered provider we check here: if the same query ran
+    recently, the answer is already in the graph and there is no reason to buy
+    it again. Rows are cheap; a repeated search is not.
+    """
+
+    __tablename__ = "search_cache"
+    __table_args__ = (UniqueConstraint("provider", "query_norm", name="uq_search_cache"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    query_norm: Mapped[str] = mapped_column(String(512), index=True)
+    query_raw: Mapped[str | None] = mapped_column(Text)
+    result_count: Mapped[int] = mapped_column(Integer, default=0)
+    stored_count: Mapped[int] = mapped_column(Integer, default=0)
+    ran_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)  # times reused
+
+
 class WebhookSubscription(Base):
     """A downstream system asking to be pushed change events."""
 
