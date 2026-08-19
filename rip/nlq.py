@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from .models import Evidence, Organization, Person
@@ -188,6 +188,9 @@ class NLQuery:
     # {"typed": ..., "matched": ...} for anything we corrected, so the answer
     # can say what it actually searched for instead of quietly substituting
     corrections: list[dict] = field(default_factory=list)
+    # job titles like "community manager" — matched against role evidence,
+    # never against research topics
+    roles: list[str] = field(default_factory=list)
 
 
 def _text_evidence_exists(session: Session, term: str) -> bool:
@@ -297,7 +300,7 @@ def parse(session: Session, query: str) -> NLQuery:
     skills, orgs, locations = _vocab(session)
     df = _token_frequency(skills)
     vocab_size = max(1, len(skills))
-    tokens = _strip_role_modifiers(re.findall(r"[a-zA-Z0-9+#.'-]+", cleaned))
+    tokens = re.findall(r"[a-zA-Z0-9+#.'-]+", cleaned)
     consumed: set[int] = set()
 
     for gram, span in _ngrams(tokens):
@@ -306,6 +309,25 @@ def parse(session: Session, query: str) -> NLQuery:
         gram_l = gram.lower()
         parts = gram_l.split()
         if all(t in STOPWORDS for t in parts):
+            continue
+        # A job title, checked before the filler rule below: role nouns are
+        # themselves stopwords, so "community managers" would otherwise be
+        # skipped and leave the bare word "community" to match Microbial
+        # Community Ecology. A title belongs against role evidence.
+        # Exactly two words. A longer phrase would swallow real vocabulary:
+        # "rust program managers" is a Rust person with a job title, not a
+        # title called "rust program manager".
+        if (len(parts) == 2 and parts[-1] in ROLE_NOUNS
+                and parts[0] not in STOPWORDS and parts[0] not in ROLE_NOUNS):
+            title = _singular_role(gram_l)
+            if _role_exists(session, title):
+                result.roles.append(title)
+            else:
+                # Nobody here holds that title, so filtering on it would just
+                # return nothing. Report it instead — the same rule the rest
+                # of the parser follows — and let live search go looking.
+                result.unmatched_terms.append(gram)
+            consumed |= span
             continue
         # A phrase that opens or closes on a filler word ("in India",
         # "learning in") is not a real term — it would match a skill that
@@ -458,6 +480,39 @@ def parse(session: Session, query: str) -> NLQuery:
     return result
 
 
+# Characters that end a word in the values we store: "Go, Python", "C/C++",
+# "Machine Learning (Applied)", "Bangalore - Karnataka".
+_WORD_EDGES = ",;/|()[]{}\"'-\u2013\u2014:.\t\n"
+
+
+def _word_match(column, value: str):
+    """Match VALUE as a whole word or phrase inside COLUMN.
+
+    A plain substring filter is close to useless at this scale: skill=r
+    matched 49,239 of 50,733 people because nearly every skill contains the
+    letter r, and skill=go reached Hinton through "Cognitive".
+
+    Every separator is rewritten to a space and both sides are padded, so one
+    LIKE can ask for " go " and mean the word. A trailing * asks for the loose
+    behaviour back: skill=go* still matches "Golang". LIKE rather than a regex
+    so the same clause runs on SQLite and Postgres.
+    """
+    v = " ".join((value or "").strip().lower().split())
+    if not v:
+        return column.isnot(None)
+    if v.endswith("*"):
+        stem = v[:-1].strip()
+        if not stem:
+            return column.isnot(None)
+        return func.lower(column).like(f"%{stem}%")
+
+    normalized = func.lower(column)
+    for sep in _WORD_EDGES:
+        normalized = func.replace(normalized, sep, " ")
+    padded = literal(" ").concat(normalized).concat(literal(" "))
+    return padded.like(f"% {v} %")
+
+
 def _name_clauses(column, token: str):
     """Word-boundary name match, since SQLite has no regex.
 
@@ -483,6 +538,30 @@ def _name_like_query(query: str) -> bool:
     """
     words = query.split()
     return 1 <= len(words) <= 3 and all(_could_be_a_name(w) for w in words)
+
+
+_PLURAL_ROLE = re.compile(r"(s|es)$")
+
+
+def _role_exists(session: Session, title: str) -> bool:
+    """Does anyone in the corpus actually hold this job title?"""
+    from .models import Affiliation
+
+    if session.execute(
+        select(Person.id).where(_word_match(Person.current_role, title)).limit(1)
+    ).first():
+        return True
+    return session.execute(
+        select(Affiliation.id).where(_word_match(Affiliation.role, title)).limit(1)
+    ).first() is not None
+
+
+def _singular_role(phrase: str) -> str:
+    """"community managers" -> "community manager", so it matches a job title."""
+    words = phrase.split()
+    if words and words[-1] not in ("bus", "ops"):
+        words[-1] = _PLURAL_ROLE.sub("", words[-1]) or words[-1]
+    return " ".join(words)
 
 
 def _near_vocabulary(term: str, skills: dict, orgs: dict, locations: dict) -> bool:
@@ -614,6 +693,7 @@ def has_filters(parsed: NLQuery) -> bool:
     return bool(
         parsed.skill_groups or parsed.organizations
         or parsed.locations or parsed.name_terms or parsed.countries
+        or parsed.roles
     )
 
 
@@ -666,6 +746,18 @@ def _filtered_stmt(parsed: NLQuery):
             func.lower(Person.location).like(f"%{loc.split(',')[0].strip().lower()}%")
             for loc in parsed.locations
         ]))
+    for title in parsed.roles:
+        # A job title, checked against what sources say someone's role is.
+        # correlate(Person) keeps Affiliation in the subquery's FROM: the outer
+        # query may already join it, and SQLAlchemy would otherwise correlate
+        # every table away and leave the EXISTS with nothing to select from.
+        stmt = stmt.where(
+            _word_match(Person.current_role, title)
+            | sa_exists().where(and_(
+                Affiliation.person_id == Person.id,
+                _word_match(Affiliation.role, title),
+            )).correlate(Person)
+        )
     if parsed.name_terms:
         from sqlalchemy import String as SAString  # noqa: F401  (used below)
 
@@ -838,7 +930,7 @@ def _search_exa(query: str, limit: int) -> list[dict]:
     ]
 
 
-def _search_github(query: str, limit: int) -> list[dict]:
+def _search_github(query: str, limit: int, parsed: "NLQuery | None" = None) -> list[dict]:
     """Working engineers — the population the scholarly indexes cannot see.
 
     Nobody publishes a paper about maintaining Kubernetes, so queries about
@@ -862,12 +954,23 @@ def _search_github(query: str, limit: int) -> list[dict]:
         return []
     attempts = [query] if len(terms) > 1 else []
     attempts += sorted(set(terms), key=len, reverse=True)
+    # GitHub can filter by location itself, so "community managers in
+    # hyderabad" stops returning people anywhere in the world.
+    place = None
+    if parsed is not None and parsed.locations:
+        place = str(parsed.locations[0]).split(",")[0].strip()
+
     logins: list[str] = []
     for attempt in attempts[:3]:
-        try:
-            logins, _total = conn.search_users(query=attempt, per_page=limit)
-        except Exception:
-            continue        # a throttled search is not a query failure
+        for loc in ([place, None] if place else [None]):
+            try:
+                logins, _total = conn.search_users(
+                    location=loc, query=attempt, per_page=limit
+                )
+            except Exception:
+                continue    # a throttled search is not a query failure
+            if logins:
+                break
         if logins:
             break
     return [
@@ -909,6 +1012,19 @@ SUGGESTION_SEARCHERS = (
     # paid, and the only source that reaches non-academic roles: tried last
     ("exa", _search_exa, True),
 )
+
+def _wants_parsed(searcher) -> bool:
+    """Does this searcher take the parsed query as a third argument?
+
+    Kept optional so a test can still patch in a plain (query, limit) function.
+    """
+    import inspect
+
+    try:
+        return len(inspect.signature(searcher).parameters) >= 3
+    except (TypeError, ValueError):
+        return False
+
 
 def _always_run(source: str) -> bool:
     """Sources that run even when earlier ones already found enough.
@@ -1027,7 +1143,10 @@ NOT_A_PERSON = re.compile(
     # indexes carry "PhD Computer Vision Mariano Cabezas" and "Computer
     # Engineering" as author records
     r"|phd|ph\.d|prof|professor|coordinator|engineering|sciences?|studies"
-    r"|editor|editorial|anonymous|unknown|staff|admin)\b",
+    r"|editor|editorial|anonymous|unknown|staff|admin"
+    r"|community|collective|network|alliance|federation|council|forum|club"
+    r"|hub|labs?|studios?|systems|tech|technologies|solutions|official|bot"
+    r"|software|digital|media|ventures|partners|holdings|pvt|private|limited)\b",
     re.IGNORECASE,
 )
 
@@ -1205,7 +1324,10 @@ def discovery_suggestions(
         # what the user actually typed rather than searching for nothing.
         search_for = (cache_key if uses_full_query else query) or cache_key
         try:
-            found = searcher(search_for, limit)
+            found = (
+                searcher(search_for, limit, parsed)
+                if _wants_parsed(searcher) else searcher(search_for, limit)
+            )
         except Exception:
             continue  # a throttled or unavailable source is not a query failure
         keep = []

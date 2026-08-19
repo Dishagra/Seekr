@@ -14,6 +14,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .db import READ_ONLY, SessionLocal, init_db
+from .nlq import _word_match  # whole-word matching, shared with the parser
 from .models import (
     Affiliation,
     Authorship,
@@ -125,41 +126,6 @@ def root():
         "auth": "Authorization: Bearer <token> required on /v1 routes",
     }
 
-
-
-# Characters that end a word in the values we store: "Go, Python", "C/C++",
-# "Machine Learning (Applied)", "Bangalore - Karnataka".
-_WORD_EDGES = ",;/|()[]{}\"'-\u2013\u2014:.\t\n"
-
-
-def _word_match(column, value: str):
-    """Match VALUE as a whole word or phrase inside COLUMN.
-
-    A plain substring filter is close to useless at this scale: skill=r
-    matched 49,239 of 50,733 people because nearly every skill contains the
-    letter r, and skill=go reached Hinton through "Cognitive".
-
-    Every separator is rewritten to a space and both sides are padded, so one
-    LIKE can ask for " go " and mean the word. A trailing * asks for the loose
-    behaviour back: skill=go* still matches "Golang". LIKE rather than a regex
-    so the same clause runs on SQLite and Postgres.
-    """
-    from sqlalchemy import literal
-
-    v = " ".join((value or "").strip().lower().split())
-    if not v:
-        return column.isnot(None)
-    if v.endswith("*"):
-        stem = v[:-1].strip()
-        if not stem:
-            return column.isnot(None)
-        return func.lower(column).like(f"%{stem}%")
-
-    normalized = func.lower(column)
-    for sep in _WORD_EDGES:
-        normalized = func.replace(normalized, sep, " ")
-    padded = literal(" ").concat(normalized).concat(literal(" "))
-    return padded.like(f"% {v} %")
 
 
 @app.get("/v1/persons")

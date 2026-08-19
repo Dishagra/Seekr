@@ -773,3 +773,33 @@ def test_empty_filters_say_which_one_to_relax(session):
     out = call(skill="Nonexistent", country="ZZ", role="Nobody")
     assert out["total_matches"] == 0
     assert out["empty_reason"]["message"]
+
+
+def test_job_titles_are_matched_as_roles_not_topics(session):
+    """"community managers" must not become the topic Microbial Community Ecology."""
+    from rip.nlq import parse
+    from rip.ingest import ingest_profile
+    from rip.normalize import EvidenceItem, NormalizedProfile, OrgAffiliation
+
+    ingest_profile(session, NormalizedProfile(
+        source="github", source_type="code", external_id="cm1",
+        url="https://github.com/cm1", raw={}, name="Ravi Community",
+        organizations=[OrgAffiliation(name="Zeta Corp", role="Community Manager")],
+        evidence=[EvidenceItem(attribute_type="skill", value="Python",
+                               url="https://example.test", confidence=0.9)],
+    ))
+
+    parsed = parse(session, "community managers at Zeta Corp")
+    assert parsed.roles == ["community manager"]
+    assert parsed.skill_groups == []          # never a research topic
+
+    # a title nobody holds is reported, not applied — the corpus cannot
+    # answer it, and filtering on it would just return nothing
+    parsed = parse(session, "delivery managers at Zeta Corp")
+    assert parsed.roles == []
+    assert any("delivery" in t.lower() for t in parsed.unmatched_terms)
+
+    # and a title must not swallow real vocabulary beside it
+    parsed = parse(session, "python community managers")
+    assert parsed.roles == ["community manager"]
+    assert [g["term"] for g in parsed.skill_groups] == ["python"]

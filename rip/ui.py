@@ -217,9 +217,9 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
 .vbtn.save.on{background:#0a66c2;border-color:#0a66c2;color:#fff}
 .chipbtn.muted{color:var(--faint);border-style:dashed}
 /* Named plink, not brand: .brand is already the sidebar logo block. */
-.plinks{display:flex; gap:5px; margin-top:5px; flex-wrap:wrap}
+.plinks{display:flex; gap:4px; margin-top:5px; flex-wrap:wrap}
 .plink{display:inline-flex; align-items:center; justify-content:center;
-  box-sizing:border-box; width:22px; height:22px; min-width:22px; flex:0 0 auto;
+  box-sizing:border-box; width:18px; height:18px; min-width:18px; flex:0 0 auto;
   border-radius:5px; text-decoration:none; padding:0;
   color:#fff; background:var(--plink); opacity:.92;
   transition:opacity .12s ease, transform .12s ease}
@@ -505,7 +505,7 @@ function brandLinks(urls, max){
     out.push(`<a class="plink" href="${esc(hit)}" target="_blank" rel="noopener noreferrer"
       title="${esc(label)}" aria-label="${esc(label)}" style="--plink:${color}"
       onclick="event.stopPropagation()">
-      <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">${path}</svg></a>`);
+      <svg viewBox="0 0 24 24" fill="currentColor" width="10" height="10">${path}</svg></a>`);
     if(out.length >= (max || MAX_BRAND_LINKS)) break;
   }
   return out.length ? `<div class="plinks">${out.join("")}</div>` : "";
