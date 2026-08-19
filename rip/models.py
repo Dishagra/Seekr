@@ -369,6 +369,39 @@ class SearchCache(Base):
     person_ids: Mapped[list | None] = mapped_column(JSON, default=list)
 
 
+class Shortlist(Base):
+    """A named collection of people someone is keeping track of."""
+
+    __tablename__ = "shortlist"
+    __table_args__ = (UniqueConstraint("name", "owner", name="uq_shortlist_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), index=True)
+    owner: Mapped[str] = mapped_column(String(128), default="anonymous", index=True)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ShortlistMember(Base):
+    """One person on one shortlist, with why they were added.
+
+    The query they were found by is kept: months later "why is this person on
+    my list" is the question, and the answer is the search that surfaced them.
+    """
+
+    __tablename__ = "shortlist_member"
+    __table_args__ = (
+        UniqueConstraint("shortlist_id", "person_id", name="uq_shortlist_member"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shortlist_id: Mapped[int] = mapped_column(ForeignKey("shortlist.id"), index=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("person.id"), index=True)
+    found_by_query: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class MatchFeedback(Base):
     """A human judgement that a person did or did not fit a query.
 

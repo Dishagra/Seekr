@@ -145,6 +145,24 @@ DEMONYMS = {
 GENERIC_DF_RATIO = 0.01
 GENERIC_DF_ABSOLUTE = 25
 FUZZY_VOCAB_THRESHOLD = 90.0
+# Names need to be stricter than topics: "Sharma" and "Verma" are both real
+# surnames, and silently swapping one for the other is worse than no answer.
+FUZZY_NAME_THRESHOLD = 92.0
+
+
+def _typo_score(typed: str, candidate: str) -> float:
+    """How close two terms are, tolerant of one slip in a longer word.
+
+    A ratio alone punishes short words unfairly: "rustt" scores 88 against
+    "rust" and would be dropped. A single edit in a word of five or more
+    characters is a typo, not a different word.
+    """
+    from rapidfuzz.distance import Levenshtein
+
+    ratio = fuzz.ratio(typed, candidate)
+    if len(typed) >= 5 and Levenshtein.distance(typed, candidate) <= 1:
+        return max(ratio, FUZZY_VOCAB_THRESHOLD)
+    return ratio
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
 
@@ -167,6 +185,9 @@ class NLQuery:
     limit: int = DEFAULT_LIMIT
     offset: int = 0
     unmatched_terms: list[str] = field(default_factory=list)
+    # {"typed": ..., "matched": ...} for anything we corrected, so the answer
+    # can say what it actually searched for instead of quietly substituting
+    corrections: list[dict] = field(default_factory=list)
 
 
 def _text_evidence_exists(session: Session, term: str) -> bool:
@@ -330,6 +351,11 @@ def parse(session: Session, query: str) -> NLQuery:
             contained = [v for k, v in skills.items() if pattern.search(k)]
             group = {"term": gram}
             if not contained:
+                # A near-miss for a real vocabulary entry is a typo, not a
+                # free-text hit: "bangalor" appears inside bios that say
+                # Bangalore, which made the city look like a skill.
+                if _near_vocabulary(gram_l, skills, orgs, locations):
+                    continue
                 # no topic matches, but a bio or job title might say it
                 if _text_evidence_exists(session, gram_l):
                     result.skill_groups.append(group)
@@ -368,18 +394,40 @@ def parse(session: Session, query: str) -> NLQuery:
             result.skill_groups.append(group)
             consumed |= span
 
-    # fuzzy pass for near-miss skill terms ("kubernetes" vs "Kubernetes ops")
+    # Typos. Checked against every vocabulary at once and the closest wins,
+    # so "bangalor" becomes the city rather than whichever skill happened to
+    # look nearest — it used to match a skill because only skills were tried.
     for i, token in enumerate(tokens):
         if i in consumed or token.lower() in STOPWORDS or len(token) < 4:
             continue
-        best = max(
-            skills.items(),
-            key=lambda kv: fuzz.ratio(token.lower(), kv[0]),
-            default=None,
-        )
-        if best and fuzz.ratio(token.lower(), best[0]) >= FUZZY_VOCAB_THRESHOLD:
-            result.skill_groups.append({"term": token, "values": [best[1]]})
+        t = token.lower()
+        best_kind, best_value, best_score = None, None, 0.0
+        for kind, vocab in (("skill", skills), ("org", orgs), ("location", locations)):
+            hit = max(vocab.items(), key=lambda kv: _typo_score(t, kv[0]), default=None)
+            if not hit:
+                continue
+            score = _typo_score(t, hit[0])
+            if score > best_score:
+                best_kind, best_value, best_score = kind, hit[1], score
+        if best_score >= FUZZY_VOCAB_THRESHOLD:
+            if best_kind == "skill":
+                result.skill_groups.append({"term": token, "values": [best_value]})
+            elif best_kind == "org":
+                result.organizations.append(best_value)
+            else:
+                result.locations.append(best_value)
+            result.corrections.append({"typed": token, "matched": str(best_value)})
             consumed.add(i)
+            continue
+
+        # A misspelled name reaches nothing at all otherwise, because name
+        # matching is exact: "hintonn" simply disappears.
+        if _could_be_a_name(token):
+            near = _nearest_name(session, t)
+            if near:
+                result.name_terms.append(near)
+                result.corrections.append({"typed": token, "matched": near})
+                consumed.add(i)
 
     # Leftovers. A capitalised word is NOT automatically a person's name:
     # treating "Hyderabad" as one silently guarantees zero results. Only apply
@@ -435,6 +483,37 @@ def _name_like_query(query: str) -> bool:
     """
     words = query.split()
     return 1 <= len(words) <= 3 and all(_could_be_a_name(w) for w in words)
+
+
+def _near_vocabulary(term: str, skills: dict, orgs: dict, locations: dict) -> bool:
+    """Is this term a near-miss for something the corpus actually knows?"""
+    for vocab in (skills, orgs, locations):
+        hit = max(vocab, key=lambda k: _typo_score(term, k), default=None)
+        if hit and _typo_score(term, hit) >= FUZZY_VOCAB_THRESHOLD:
+            return True
+    return False
+
+
+def _nearest_name(session: Session, token: str) -> str | None:
+    """The closest real surname to a typo, or None if nothing is close.
+
+    Blocked on the first three letters so this is a small comparison rather
+    than a scan of every name in the graph.
+    """
+    from .models import PersonNameToken
+
+    if len(token) < 4:
+        return None
+    candidates = session.execute(
+        select(PersonNameToken.token)
+        .where(PersonNameToken.token.like(f"{token[:3]}%"))
+        .distinct()
+        .limit(400)
+    ).scalars().all()
+    best = max(candidates, key=lambda c: _typo_score(token, c), default=None)
+    if best and best != token and _typo_score(token, best) >= FUZZY_NAME_THRESHOLD:
+        return best
+    return None
 
 
 def _could_be_a_name(token: str) -> bool:

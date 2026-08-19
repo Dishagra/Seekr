@@ -201,8 +201,13 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
   margin-right:4px;cursor:pointer;color:var(--muted);line-height:1}
 .vbtn:hover{border-color:var(--fg);color:var(--fg)}
 .vbtn.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
-.ext{display:inline-block;margin-left:6px;padding:0 5px;border-radius:3px;font-size:10px;
-  font-weight:700;text-decoration:none;background:#0a66c2;color:#fff;vertical-align:middle}
+.vbtn.save.on{background:#0a66c2;border-color:#0a66c2;color:#fff}
+.chipbtn.muted{color:var(--faint);border-style:dashed}
+.ext{display:inline-flex;align-items:center;justify-content:center;margin-left:6px;
+  width:18px;height:18px;border-radius:4px;text-decoration:none;vertical-align:middle;
+  color:var(--muted);border:1px solid var(--line)}
+.ext:hover{color:var(--fg);border-color:var(--fg)}
+.ext.li:hover{color:#0a66c2;border-color:#0a66c2}
 .livetag{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:999px;
   font-size:10px;font-weight:600;letter-spacing:.02em;vertical-align:middle;
   background:var(--accent-soft,#e8f0fe);color:var(--accent,#1a56db)}
@@ -323,8 +328,11 @@ const ICON = {
   plug:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v5"/></svg>',
   caret:'<svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
   back:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
-  up:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 14l5-5 5 5"/></svg>',
-  down:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10l5 5 5-5"/></svg>',
+  thumbUp:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M7 22V10l5-8a2.5 2.5 0 0 1 2.4 3.2L13.5 9H19a2.5 2.5 0 0 1 2.4 3.1l-1.7 7A2.5 2.5 0 0 1 17.3 22z"/><rect x="2" y="10" width="5" height="12" rx="1"/></svg>',
+  thumbDown:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M17 2v12l-5 8a2.5 2.5 0 0 1-2.4-3.2l.9-3.8H5a2.5 2.5 0 0 1-2.4-3.1l1.7-7A2.5 2.5 0 0 1 6.7 2z"/><rect x="17" y="2" width="5" height="12" rx="1"/></svg>',
+  bookmark:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+  linkedin:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5M2.5 9.5h5V21h-5zM10 9.5h4.7v1.6c.7-1.2 2-1.9 3.6-1.9 3 0 4.2 1.9 4.2 5.2V21h-5v-5.6c0-1.5-.5-2.4-1.8-2.4-1 0-1.6.7-1.9 1.4-.1.2-.1.6-.1.9V21h-5z"/></svg>',
+  github:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2"/></svg>',
   empty:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg>',
 };
 
@@ -356,6 +364,7 @@ function signOut(){ localStorage.removeItem("seekr_token"); localStorage.removeI
 /* ---------------- shell ---------------- */
 const NAV = [
   ["#/search", "Search", ICON.search],
+  ["#/shortlists", "Shortlists", ICON.bookmark],
   ["#/review", "Review", ICON.review],
   ["#/sources", "Sources", ICON.plug],
 ];
@@ -429,11 +438,46 @@ function searchTopbar(q){
   </div>`;
 }
 
+/* ---------------- recent searches ---------------- */
+const RECENT_KEY = "seekr_recent";
+const recent = ()=>{ try{ return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; }catch(e){ return []; } };
+function rememberQuery(q){
+  const list = [q, ...recent().filter(x=>x!==q)].slice(0, 8);
+  localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+}
+function paintRecent(){
+  const box = $("#recent"); if(!box) return;
+  const list = recent();
+  box.hidden = !list.length;
+  box.innerHTML = `<em>Recent</em>` + list.map(x=>
+    `<button class="chipbtn" onclick="useExample(this)">${esc(x)}</button>`).join("")
+    + (list.length ? `<button class="chipbtn muted" onclick="clearRecent()">clear</button>` : "");
+}
+function clearRecent(){ localStorage.removeItem(RECENT_KEY); paintRecent(); }
+
+/* Trending is drawn from the corpus itself — the roles and skills most people
+   in Seekr actually carry, refreshed from /v1/facets on every visit. It
+   reflects this graph, not an outside market index. */
+async function paintTrending(){
+  const box = $("#trending"); if(!box) return;
+  try{
+    // Roles only. Skills skew to whatever the corpus happens to hold — the
+    // top ones today are particle physics topics, which is not a job anyone
+    // searches for. Job titles are what people actually look for.
+    const roles = await api("/v1/facets?field=role&limit=8");
+    const chips = (roles.values||roles.facets||[])
+      .map(v=>v.value).filter(Boolean).slice(0,7);
+    if(chips.length) box.innerHTML = `<em>Trending</em>` + chips.map(x=>
+      `<button class="chipbtn" onclick="useExample(this)">${esc(x)}</button>`).join("");
+  }catch(e){ /* keep the static examples if facets are unavailable */ }
+}
+
 async function renderSearch(){
   const last = sessionStorage.getItem("seekr_q") || "";
   shell("#/search", searchTopbar(last), `
-    <div class="examples"><em>Try</em>${EXAMPLES.map(x=>
+    <div class="examples" id="trending"><em>Trending</em>${EXAMPLES.map(x=>
       `<button class="chipbtn" onclick="useExample(this)">${esc(x)}</button>`).join("")}</div>
+    <div class="examples" id="recent" hidden><em>Recent</em></div>
     <details class="filters" id="filterbox">
       <summary>${ICON.caret} Filters <span class="count" id="fcount" hidden>0</span></summary>
       <div class="fgrid">
@@ -465,6 +509,8 @@ async function renderSearch(){
     <div id="results"></div>`);
   bindSearchKeys();
   loadFacets();
+  paintRecent();
+  paintTrending();
   if(last) runQuery();
 }
 function useExample(el){ $("#q").value = el.textContent; runQuery(); }
@@ -519,6 +565,8 @@ function busy(msg){ $("#results").innerHTML = `<div class="loading"><div class="
 async function runQuery(discover, offset){
   const q = $("#q").value.trim(); if(!q) return;
   sessionStorage.setItem("seekr_q", q);
+  rememberQuery(q);
+  paintRecent();
   const paging = typeof offset === "number" && offset > 0;
   if(!paging){ PAGE = {mode:"query", q, offset:0, rows:[]}; busy(discover?"Querying live sources…":"Searching…"); }
   try{
@@ -572,12 +620,19 @@ function renderResults(data, opts={}){
     ].filter(Boolean).join(" · ");
     // fetched live for this query rather than already in the corpus
     const liveTag = p.from_live_search ? '<span class="livetag">new</span>' : "";
-    // verified links only — never a guessed profile URL
-    const li = (p.profile_urls||[]).find(u=>/linkedin\.com/i.test(u));
-    const liLink = li ? `<a class="ext" href="${esc(li)}" target="_blank" rel="noopener noreferrer"
-      title="LinkedIn profile" onclick="event.stopPropagation()">in</a>` : "";
+    // Verified links only — never a guessed profile URL. This replaces the
+    // record id, which was shown to nobody's benefit.
+    const urls = p.profile_urls || [];
+    const li = urls.find(u=>/linkedin\.com/i.test(u));
+    const gh = urls.find(u=>/github\.com/i.test(u));
+    const links = [
+      li ? `<a class="ext li" href="${esc(li)}" target="_blank" rel="noopener noreferrer"
+        title="LinkedIn profile" onclick="event.stopPropagation()">${ICON.linkedin}</a>` : "",
+      gh ? `<a class="ext gh" href="${esc(gh)}" target="_blank" rel="noopener noreferrer"
+        title="GitHub profile" onclick="event.stopPropagation()">${ICON.github}</a>` : "",
+    ].join("");
     return `<tr onclick="location.hash='#/person/${p.id}'">
-      <td class="nm">${esc(p.canonical_name||"Unnamed")}${liveTag}${liLink}<span class="id">${esc(p.id.slice(0,8))}</span></td>
+      <td class="nm">${esc(p.canonical_name||"Unnamed")}${liveTag}${links}</td>
       <td class="org">${primary?esc(primary):'<span class="muted">—</span>'}
         ${orgSub?`<div class="sub2">${orgSub}</div>`:""}</td>
       <td class="org">${esc(p.location||"")||'<span class="muted">—</span>'}</td>
@@ -585,9 +640,11 @@ function renderResults(data, opts={}){
       <td>${srcs.length?srcs.map(s=>`<span class="srcpill">${esc(s)}</span>`).join(""):'<span class="muted">—</span>'}</td>
       <td class="vote" onclick="event.stopPropagation()">
         <button class="vbtn" title="Good match for this query"
-          onclick="vote('${p.id}','good',this)">${ICON.up}</button>
+          onclick="vote('${p.id}','good',this)">${ICON.thumbUp}</button>
         <button class="vbtn" title="Bad match for this query"
-          onclick="vote('${p.id}','bad',this)">${ICON.down}</button>
+          onclick="vote('${p.id}','bad',this)">${ICON.thumbDown}</button>
+        <button class="vbtn save" title="Save to a shortlist"
+          onclick="saveTo('${p.id}',this)">${ICON.bookmark}</button>
       </td>
     </tr>`;
   });
@@ -597,6 +654,13 @@ function renderResults(data, opts={}){
   const total = data.total_matches ?? PAGE.rows.length;
   // A dropped constraint must be loud: results that silently ignore
   // "in Hyderabad" read as wrong answers rather than a coverage gap.
+  // A corrected spelling must be visible, or the answer quietly belongs to a
+  // different question than the one that was asked.
+  const corr = data.corrections || [];
+  const corrBanner = corr.length ? `
+    <div class="banner">Showing results for ${corr.map(c=>
+      `<b>${esc(c.matched)}</b>`).join(", ")} — you typed ${corr.map(c=>
+      `<i>${esc(c.typed)}</i>`).join(", ")}.</div>` : "";
   // the deployed snapshot cannot be written to, so live finds are not kept
   const roBanner = (data.storage === "read-only" && data.stored_from_live === 0
                     && (data.discovery_suggestions||[]).length) ? `
@@ -648,7 +712,7 @@ function renderResults(data, opts={}){
       <div class="count">${PAGE.rows.length?`<b>${fmt(PAGE.rows.length)}</b> of ${fmt(total)} matching`:""}</div>
       <div class="pills">${pills}${unmatched}</div>
     </div>
-    ${roBanner}${unmatchedBanner}${main}${suggBlock}`;
+    ${corrBanner}${roBanner}${unmatchedBanner}${main}${suggBlock}`;
 }
 function emptyState(title, body, action){
   return `<div class="card"><div class="empty">
@@ -668,6 +732,60 @@ async function vote(personId, verdict, btn){
       body: JSON.stringify({person_id: personId, verdict, query: PAGE.q || ""})});
     btn.title = "Recorded";
   }catch(e){ btn.classList.remove("on"); btn.title = "Could not record: "+e.message; }
+}
+
+/* ---------------- shortlists ---------------- */
+async function saveTo(personId, btn){
+  let lists = {shortlists: []};
+  try{ lists = await api("/v1/shortlists"); }catch(e){ }
+  const names = lists.shortlists.map(l=>l.name);
+  const prompt_ = names.length
+    ? `Save to which shortlist?\n\nExisting: ${names.join(", ")}\n\nType a name (new or existing):`
+    : "Name your first shortlist:";
+  const name = window.prompt(prompt_, names[0] || "Shortlist");
+  if(!name) return;
+  btn.disabled = true;
+  try{
+    const sl = await api("/v1/shortlists", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({name})});
+    const r = await api(`/v1/shortlists/${sl.id}/members`, {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({person_id: personId, query: PAGE.q || ""})});
+    btn.classList.add("on");
+    btn.title = r.added ? `Saved to ${sl.name}` : `Already on ${sl.name}`;
+  }catch(e){ btn.title = "Could not save: "+e.message; btn.disabled = false; }
+}
+
+async function renderShortlists(){
+  shell("#/shortlists", null, `<div class="loading"><div class="spinner"></div>Loading shortlists…</div>`);
+  let data;
+  try{ data = await api("/v1/shortlists"); }
+  catch(e){ $("#results") && ($("#results").innerHTML = esc(e.message)); return; }
+  if(!data.shortlists.length){
+    shell("#/shortlists", null, `<div class="empty">${ICON.empty}
+      <p>No shortlists yet. Save someone from a search to start one.</p></div>`);
+    return;
+  }
+  const blocks = await Promise.all(data.shortlists.map(l=>api(`/v1/shortlists/${l.id}`)));
+  shell("#/shortlists", null, blocks.map(b=>`
+    <section class="block"><h2>${esc(b.name)} <span class="n">${b.count}</span></h2>
+      <div class="card"><div class="tablewrap"><table class="list">
+        <thead><tr><th>Name</th><th>Found by</th><th>Added</th><th></th></tr></thead>
+        <tbody>${b.members.map(m=>`<tr onclick="location.hash='#/person/${m.person_id}'">
+          <td class="nm">${esc(m.canonical_name||"Unnamed")}</td>
+          <td class="sk">${esc(m.found_by_query||"")||'<span class="muted">—</span>'}</td>
+          <td class="org">${esc(String(m.added_at||"").slice(0,10))}</td>
+          <td class="num"><button class="btn sm" onclick="event.stopPropagation();
+            unsave(${b.id},'${m.person_id}',this)">Remove</button></td>
+        </tr>`).join("")}</tbody></table></div></div></section>`).join(""));
+}
+
+async function unsave(listId, personId, btn){
+  btn.disabled = true;
+  try{
+    await api(`/v1/shortlists/${listId}/members/${personId}`, {method:"DELETE"});
+    btn.closest("tr").remove();
+  }catch(e){ btn.textContent = "Failed"; btn.disabled = false; }
 }
 
 async function queueOne(source, externalId, btn){
@@ -944,6 +1062,7 @@ async function route(){
   const h = location.hash || "#/search";
   try{
     if(h.startsWith("#/person/")) await renderPerson(h.split("/")[2]);
+    else if(h==="#/shortlists") await renderShortlists();
     else if(h==="#/review") await renderReview();
     else if(h==="#/sources") await renderSources();
     else await renderSearch();

@@ -808,6 +808,9 @@ def nl_query(
             "offset": parsed.offset,
         },
         "unmatched_terms": parsed.unmatched_terms,
+        # what we searched for instead of what was typed, so a corrected
+        # query never silently answers a different question
+        "corrections": parsed.corrections,
         # count = this page; total_matches = everything the filters match
         "count": len(persons),
         "total_matches": total,
@@ -904,6 +907,125 @@ def nl_query(
         if mode == "queue":
             response["queued_leads"] = queue_suggestions(db, suggestions, q)
     return response
+
+
+@app.get("/v1/shortlists")
+def list_shortlists(owner: str = Query("anonymous"), db: Session = Depends(get_db)):
+    """Every shortlist and how many people are on it."""
+    from .models import Shortlist, ShortlistMember
+
+    rows = db.execute(
+        select(Shortlist, func.count(ShortlistMember.id))
+        .outerjoin(ShortlistMember, ShortlistMember.shortlist_id == Shortlist.id)
+        .where(Shortlist.owner == owner)
+        .group_by(Shortlist.id)
+        .order_by(Shortlist.name)
+    ).all()
+    return {
+        "count": len(rows),
+        "shortlists": [
+            {"id": sl.id, "name": sl.name, "note": sl.note,
+             "members": n, "created_at": sl.created_at}
+            for sl, n in rows
+        ],
+    }
+
+
+@app.post("/v1/shortlists")
+def create_shortlist(payload: dict, db: Session = Depends(get_db)):
+    """Create a shortlist, or return the existing one with that name."""
+    from .models import Shortlist
+
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    owner = str(payload.get("owner") or "anonymous")[:128]
+    row = db.execute(
+        select(Shortlist).where(Shortlist.name == name, Shortlist.owner == owner)
+    ).scalar_one_or_none()
+    created = row is None
+    if row is None:
+        row = Shortlist(name=name[:200], owner=owner, note=payload.get("note"))
+        db.add(row)
+        db.commit()
+    return {"id": row.id, "name": row.name, "owner": row.owner, "created": created}
+
+
+@app.get("/v1/shortlists/{shortlist_id}")
+def get_shortlist(shortlist_id: int, db: Session = Depends(get_db)):
+    """The people on a shortlist, with why each was added."""
+    from .models import Person, Shortlist, ShortlistMember
+
+    sl = db.get(Shortlist, shortlist_id)
+    if sl is None:
+        raise HTTPException(404, "no such shortlist")
+    rows = db.execute(
+        select(ShortlistMember, Person)
+        .join(Person, Person.id == ShortlistMember.person_id)
+        .where(ShortlistMember.shortlist_id == shortlist_id)
+        .order_by(ShortlistMember.added_at.desc())
+    ).all()
+    return {
+        "id": sl.id, "name": sl.name, "note": sl.note, "count": len(rows),
+        "members": [
+            {
+                "person_id": str(person.id),
+                "canonical_name": person.canonical_name,
+                "location": person.location,
+                "profile_urls": person.profile_urls,
+                "found_by_query": m.found_by_query,
+                "note": m.note,
+                "added_at": m.added_at,
+            }
+            for m, person in rows
+        ],
+    }
+
+
+@app.post("/v1/shortlists/{shortlist_id}/members")
+def add_to_shortlist(shortlist_id: int, payload: dict, db: Session = Depends(get_db)):
+    """Put a person on a shortlist. Idempotent."""
+    from .models import Person, Shortlist, ShortlistMember
+
+    if db.get(Shortlist, shortlist_id) is None:
+        raise HTTPException(404, "no such shortlist")
+    person_id = str(payload.get("person_id") or "").strip()
+    if db.get(Person, person_id) is None:
+        raise HTTPException(404, "no such person")
+    row = db.execute(
+        select(ShortlistMember).where(
+            ShortlistMember.shortlist_id == shortlist_id,
+            ShortlistMember.person_id == person_id,
+        )
+    ).scalar_one_or_none()
+    added = row is None
+    if row is None:
+        row = ShortlistMember(
+            shortlist_id=shortlist_id, person_id=person_id,
+            found_by_query=(payload.get("query") or None),
+            note=(payload.get("note") or None),
+        )
+        db.add(row)
+        db.commit()
+    return {"shortlist_id": shortlist_id, "person_id": person_id, "added": added}
+
+
+@app.delete("/v1/shortlists/{shortlist_id}/members/{person_id}")
+def remove_from_shortlist(shortlist_id: int, person_id: str, db: Session = Depends(get_db)):
+    """Take a person off a shortlist. The person themselves is untouched."""
+    from .models import ShortlistMember
+
+    row = db.execute(
+        select(ShortlistMember).where(
+            ShortlistMember.shortlist_id == shortlist_id,
+            ShortlistMember.person_id == person_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(404, "not on this shortlist")
+    db.delete(row)
+    db.commit()
+    return {"shortlist_id": shortlist_id, "person_id": person_id, "removed": True}
 
 
 @app.post("/v1/feedback")

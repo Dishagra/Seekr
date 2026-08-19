@@ -642,3 +642,47 @@ def test_feedback_rejects_a_bad_verdict(session):
     for bad in ("maybe", "", "5"):
         with pytest.raises(HTTPException):
             post_feedback({"person_id": pid, "query": "rust", "verdict": bad}, db=session)
+
+
+def test_shortlists_hold_people_with_the_query_that_found_them(session):
+    import pytest
+    from fastapi import HTTPException
+
+    from rip.api import (add_to_shortlist, create_shortlist, get_shortlist,
+                         list_shortlists, remove_from_shortlist)
+    from rip.models import Person
+
+    seed(session)
+    person = session.query(Person).first()
+    made = create_shortlist({"name": "Rust hires", "note": "Q3"}, db=session)
+    assert made["created"] is True
+    # same name again returns the existing list rather than a duplicate
+    assert create_shortlist({"name": "Rust hires"}, db=session)["created"] is False
+
+    add = add_to_shortlist(made["id"], {"person_id": str(person.id), "query": "rust"}, db=session)
+    assert add["added"] is True
+    assert add_to_shortlist(made["id"], {"person_id": str(person.id)}, db=session)["added"] is False
+
+    body = get_shortlist(made["id"], db=session)
+    assert body["count"] == 1
+    assert body["members"][0]["found_by_query"] == "rust"   # why they are here
+    assert list_shortlists(owner="anonymous", db=session)["shortlists"][0]["members"] == 1
+
+    remove_from_shortlist(made["id"], str(person.id), db=session)
+    assert get_shortlist(made["id"], db=session)["count"] == 0
+    # the person is not deleted, only unlisted
+    assert session.get(Person, person.id) is not None
+    with pytest.raises(HTTPException):
+        remove_from_shortlist(made["id"], str(person.id), db=session)
+
+
+def test_typos_are_corrected_and_reported(session):
+    """A corrected query must say what it actually searched for."""
+    from rip.nlq import parse
+
+    seed(session)
+    parsed = parse(session, "rustt at Acme Labs")
+    assert parsed.corrections, "a near-miss should be corrected"
+    assert parsed.corrections[0]["typed"] == "rustt"
+    # and the correction is applied, not just reported
+    assert parsed.skill_groups or parsed.organizations
