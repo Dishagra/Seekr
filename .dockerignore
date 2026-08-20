@@ -1,0 +1,43 @@
+# Everything here is either a secret, a machine-local artefact, or something the
+# build regenerates. Excluding it keeps the context small AND keeps credentials
+# and personal data out of the image — a COPY cannot leak what was never sent.
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Databases — these hold personal data about real people. Never bake them into
+# an image; mount a volume at /data instead.
+*.db
+*.db-wal
+*.db-shm
+*.db.bak*
+data/
+
+# Rebuilt by the web stage, so the committed bundle is not worth shipping twice
+frontend/
+
+# Machine-local
+.venv/
+node_modules/
+web/node_modules/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.tsbuildinfo
+.pytest_cache/
+web/dist/
+
+# Not needed at runtime
+.git/
+.github/
+.vercel
+.vercelignore
+vercel.json
+backend/tests/
+backend/scripts/
+docs/
+seekr.log
+*.jsonl
+*.jsonl.gz

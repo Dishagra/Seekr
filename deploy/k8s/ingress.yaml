@@ -1,0 +1,40 @@
+# AWS Load Balancer Controller. Every REPLACE below is an account-specific
+# value; the rest is Seekr-specific and can stand as written.
+#
+# If the cluster fronts traffic with nginx-ingress or an API gateway instead,
+# only the annotations change — the backend is one Service on one port,
+# because the API and the UI are the same origin. The UI calls /v1 relatively,
+# so splitting them across hosts would need CORS that the app does not send.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: seekr
+  namespace: seekr
+  labels:
+    app.kubernetes.io/name: seekr
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: REPLACE_ACM_CERT_ARN
+    # Health checks hit the same unauthenticated route the probes use.
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    # A live search calls third-party APIs before it answers. The ALB default
+    # of 60s cuts those off mid-flight and returns a 504 to a request that was
+    # about to succeed.
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=120
+spec:
+  ingressClassName: alb
+  rules:
+    - host: REPLACE_seekr.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: seekr
+                port:
+                  name: http

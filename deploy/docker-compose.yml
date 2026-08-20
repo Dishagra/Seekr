@@ -1,0 +1,51 @@
+# A local stand-in for the real deployment: the same image, against Postgres,
+# with nothing on the host filesystem. Bring it up before touching Kubernetes —
+# if this works, the image and the database configuration are both correct and
+# anything that fails afterwards is cluster wiring rather than the application.
+#
+#   docker compose -f deploy/docker-compose.yml up --build
+#   open http://localhost:8000/ui        (token below)
+#   docker compose -f deploy/docker-compose.yml down -v
+#
+# Not for production: the credentials are in this file, which is the one thing
+# a real deployment must never do.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: seekr
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: seekr
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seekr -d seekr"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy    # the app creates its schema on boot
+    environment:
+      RIP_DATABASE_URL: postgresql+psycopg://seekr:localdev@db:5432/seekr
+      RIP_API_TOKEN: local-dev-token
+      # Optional; ingestion is heavily rate-limited without them.
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      OPENALEX_MAILTO: "${OPENALEX_MAILTO:-}"
+    ports:
+      - "8000:8000"
+    # Proves the pod-level hardening works before it is written into a
+    # SecurityContext: the app writes nothing outside the database.
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+volumes:
+  pgdata:

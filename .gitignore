@@ -25,16 +25,12 @@ __pycache__/
 build/
 dist/
 
+# Frontend
+node_modules/
+web/dist/
+*.tsbuildinfo
+
 # Tooling
 .vercel
 .DS_Store
 seekr.log
-demo/frames/
-demo/check/
-demo/film.log
-demo/edit/
-demo/audio/
-demo/sequence.txt
-demo/cues.json
-demo/marks.json
-demo/speed.txt

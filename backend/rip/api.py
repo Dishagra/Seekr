@@ -1,7 +1,12 @@
-"""Read API for the downstream ranking tool.
+"""Read API: faceted filtering, lookup, and ranked natural-language search.
 
-Deliberately ranking-free: filtering and lookup only. Stable person UUIDs,
-full provenance, and a /changes feed for incremental sync.
+Stable person UUIDs, full provenance, and a /changes feed for incremental sync.
+
+Two search surfaces, deliberately different. `/v1/persons` filters and never
+orders by fitness, so a downstream tool can apply its own scoring to a raw
+match set. `/v1/query` ranks, because a natural-language question is a request
+for the best answers, not for every answer in insertion order — every result
+carries the score and the evidence components behind it.
 """
 
 from datetime import datetime
@@ -38,7 +43,7 @@ from .models import (
 
 app = FastAPI(
     title="Seekr",
-    description="Evidence-backed resource data layer. No ranking - that is downstream.",
+    description="Evidence-backed resource data layer. /v1/query ranks by evidence; /v1/persons filters without ordering.",
     version="0.1.0",
 )
 
@@ -825,7 +830,7 @@ def nl_query(
     ),
     db: Session = Depends(get_db),
 ):
-    """Natural-language search. Read-only, no ranking — DB order.
+    """Natural-language search. Read-only, ranked by evidence.
 
     The response is explicit about which terms became filters and which
     could not be applied; never assume an unlisted constraint was enforced.
@@ -890,6 +895,13 @@ def nl_query(
             summary["matched_organization"] = next(
                 (o for o in summary["organizations"] if o.lower() in wanted_orgs), None
             )
+            # Why this person ranks where they do. A score with no breakdown is
+            # an assertion; the components name the evidence behind it.
+            relevance = getattr(person, "relevance", None)
+            if relevance:
+                summary["score"] = relevance.get("score")
+                summary["score_components"] = relevance.get("components")
+                summary["matched_evidence"] = relevance.get("matched_evidence")
             out.append(summary)
         return out
 
@@ -973,6 +985,9 @@ def nl_query(
             # unmatched a moment ago (a company name we had never seen) are now
             # real filters. Re-parse before re-running, or the people we just
             # stored stay invisible to the very query that fetched them.
+            from .nlq import invalidate_vocab
+
+            invalidate_vocab()  # the cache predates the people we just stored
             parsed = parse(db, q)
             if limit:
                 parsed.limit = limit

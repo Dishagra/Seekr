@@ -1,0 +1,13 @@
+# Keeps a node drain from taking the whole service down. minAvailable: 1
+# rather than a percentage so it still behaves correctly at two replicas.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: seekr
+  namespace: seekr
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seekr
+      app.kubernetes.io/component: api

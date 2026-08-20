@@ -212,3 +212,37 @@ def test_rate_limited_hops_are_reported_separately(session, monkeypatch):
     result = enrich(session, gh_profile())
     assert result.rate_limited
     assert result.ingested == []
+
+
+def test_orcid_hop_builds_a_key_openalex_accepts():
+    """Regression: the ORCID -> OpenAlex hop 404'd on every author.
+
+    enrich.py hands OpenAlex an ORCID *URL*; the connector reduced any
+    identifier to its last path segment, and a bare ORCID is not a key
+    OpenAlex resolves. The hop failed silently for every academic, which is
+    exactly the hop that ties a scholarly identity to a code one.
+    """
+    from rip.connectors.openalex import OpenAlexConnector
+
+    key = OpenAlexConnector._author_key
+    assert key("https://orcid.org/0009-0007-3143-9875") == "orcid:0009-0007-3143-9875"
+    assert key("0009-0007-3143-9875") == "orcid:0009-0007-3143-9875"
+    assert key("0000-0002-1825-009X") == "orcid:0000-0002-1825-009X"  # checksum X
+    # OpenAlex IDs keep working in both forms
+    assert key("https://openalex.org/A5108009533") == "A5108009533"
+    assert key("A5108009533") == "A5108009533"
+
+
+def test_orcid_hop_is_actually_emitted_for_a_profile_carrying_an_orcid():
+    """The hop has to exist before the key it builds can matter."""
+    from rip.enrich import _hops_from
+    from rip.normalize import NormalizedProfile
+
+    profile = NormalizedProfile(
+        source="github", source_type="code_hosting", external_id="x",
+        url="https://github.com/x", raw={}, name="X",
+        orcid="https://orcid.org/0009-0007-3143-9875",
+    )
+    targets = {h.source: h.identifier for h in _hops_from(profile)}
+    assert targets["orcid"] == "0009-0007-3143-9875"
+    assert "0009-0007-3143-9875" in targets["openalex"]

@@ -1,0 +1,136 @@
+# The nightly pipeline, lifted from backend/scripts/nightly_refresh.sh.
+#
+# Two of that script's five steps do not exist here: it built a read-only
+# SQLite snapshot and redeployed Vercel, because that deployment could not be
+# written to. With Postgres the database IS live and writable, so the data is
+# fresh the moment a job commits — nothing to rebuild, nothing to redeploy.
+#
+# These jobs write. Keep them out of the serving pod so a long ingest cannot
+# take request capacity with it, and so a failure here never restarts the API.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: seekr-nightly
+  namespace: seekr
+  labels:
+    app.kubernetes.io/name: seekr
+    app.kubernetes.io/component: ingest
+spec:
+  schedule: "0 3 * * *"          # 03:00, matching the existing crontab entry
+  timeZone: "Asia/Kolkata"       # needs Kubernetes 1.27+
+  concurrencyPolicy: Forbid      # a slow run must not overlap the next one
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0            # rate-limited third parties: do not hammer on failure
+      activeDeadlineSeconds: 10800   # 3h ceiling, then it is stuck, not slow
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: refresh
+              image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/seekr:REPLACE_ME
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: seekr
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests: { cpu: 200m, memory: 512Mi }
+                limits:   { cpu: "1",  memory: 1Gi }
+              # Each step continues past its own failures, exactly as the shell
+              # script does: one unreachable source must not cancel the rest of
+              # the night's work.
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -u
+                  echo "=== nightly refresh $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+                  python -m rip.cli refresh --older-than-hours 24 \
+                    || echo "refresh had failures (continuing)"
+
+                  python -m rip.cli discover \
+                    || echo "discover failed (continuing)"
+
+                  python -m rip.cli ingest-leads --limit "${RIP_LEAD_BATCH:-100}" \
+                    || echo "lead drain had failures (continuing)"
+
+                  python -m rip.cli deliver-webhooks \
+                    || echo "webhook delivery had failures"
+
+                  echo "=== done $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+          volumes:
+            - name: tmp
+              emptyDir: {}
+---
+# Sunday only, and separate because it is the one step that touches every
+# stored record. It re-normalizes raw payloads already on disk to pick up
+# parser improvements — no network, so it neither needs nor respects the
+# rate limits the nightly job works around.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: seekr-weekly-reparse
+  namespace: seekr
+  labels:
+    app.kubernetes.io/name: seekr
+    app.kubernetes.io/component: ingest
+spec:
+  schedule: "0 5 * * 0"          # Sunday 05:00, clear of the nightly job
+  timeZone: "Asia/Kolkata"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 14400
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reparse
+              image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/seekr:REPLACE_ME
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: seekr
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests: { cpu: 500m, memory: 1Gi }
+                limits:   { cpu: "2",  memory: 2Gi }
+              command: ["python", "-m", "rip.cli", "reparse"]
+          volumes:
+            - name: tmp
+              emptyDir: {}

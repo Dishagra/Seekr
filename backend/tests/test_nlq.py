@@ -69,9 +69,9 @@ def test_name_term_filter(session):
     assert [p.canonical_name for p in results] == ["Grace Sample"]
 
 
-def test_no_ranking_db_order(session):
+def test_parsing_stays_free_of_scoring(session):
     seed(session)
-    # no scores anywhere in the parse result
+    # parsing extracts constraints; scoring belongs to execute(), not here
     parsed = parse(session, "python")
     assert not hasattr(parsed, "score")
     results = execute(session, parsed)
@@ -837,3 +837,157 @@ def test_one_organization_however_it_is_spelled(session):
 
     pms = {p.canonical_name for p in execute(session, parse(session, "program managers at deccan.ai"))}
     assert pms == {"Ann Pm", "Bo Pm"}
+
+
+def test_stronger_evidence_ranks_first(session):
+    """The person with more, better-attested evidence leads the list."""
+    ingest_profile(
+        session,
+        make_profile(
+            name="Deep Evidence", external_id="deep", url="https://github.com/deep",
+            raw={"login": "deep"}, usernames=["github:deep"], location="Berlin, Germany",
+            evidence=[
+                EvidenceItem(attribute_type="skill", value="Kubernetes", confidence=0.9),
+                EvidenceItem(attribute_type="specialization", value="Kubernetes Operators",
+                             confidence=0.8),
+            ],
+        ),
+    )
+    ingest_profile(
+        session,
+        make_profile(
+            name="Thin Evidence", external_id="thin", url="https://github.com/thin",
+            raw={"login": "thin"}, usernames=["github:thin"], location="Berlin, Germany",
+            evidence=[EvidenceItem(attribute_type="skill", value="Kubernetes", confidence=0.45)],
+        ),
+    )
+    rows = execute(session, parse(session, "kubernetes"))
+    names = [p.canonical_name for p in rows]
+    assert names.index("Deep Evidence") < names.index("Thin Evidence")
+    assert rows[0].relevance["score"] > rows[-1].relevance["score"]
+    # the score has to be explainable, not just present
+    assert set(rows[0].relevance["components"]) == {
+        "depth", "output", "confidence", "corroboration", "breadth", "recency",
+    }
+    # the weights have to stay a blend, not drift into one signal dominating
+    from rip.nlq import WEIGHTS
+
+    assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
+    assert max(WEIGHTS.values()) <= 0.35
+
+
+def test_a_stated_skill_outranks_a_bio_mention(session):
+    """Free text separates someone from nobody; it never beats a real skill."""
+    ingest_profile(
+        session,
+        make_profile(
+            name="Bio Only", external_id="bio", url="https://github.com/bio",
+            raw={"login": "bio"}, usernames=["github:bio"],
+            evidence=[EvidenceItem(attribute_type="bio",
+                                   value="I dabble in kubernetes on weekends", confidence=0.6)],
+        ),
+    )
+    ingest_profile(
+        session,
+        make_profile(
+            name="Real Skill", external_id="real", url="https://github.com/real",
+            raw={"login": "real"}, usernames=["github:real"],
+            evidence=[EvidenceItem(attribute_type="skill", value="Kubernetes", confidence=0.6)],
+        ),
+    )
+    rows = execute(session, parse(session, "kubernetes"))
+    assert [p.canonical_name for p in rows][0] == "Real Skill"
+    # but the bio match is still found and still scores above zero
+    assert "Bio Only" in [p.canonical_name for p in rows]
+    assert rows[-1].relevance["score"] > 0
+
+
+def test_vocabulary_cache_does_not_leak_between_databases(session):
+    """A cached vocabulary belongs to one database, never to the process."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from rip.db import Base
+
+    seed(session)
+    assert parse(session, "rust developers").skill_groups  # populates the cache
+
+    other = create_engine("sqlite://")
+    Base.metadata.create_all(other)
+    with sessionmaker(bind=other)() as empty:
+        # an empty corpus knows no vocabulary — if the cache leaked it would
+        # answer with the first database's skills
+        assert parse(empty, "rust developers").skill_groups == []
+
+
+def _with_project(session, *, name, login, tech, stars, last_active, skill="Rust"):
+    from rip.normalize import ProjectData
+
+    return ingest_profile(
+        session,
+        make_profile(
+            name=name, external_id=login, url=f"https://github.com/{login}",
+            raw={"login": login}, usernames=[f"github:{login}"],
+            evidence=[EvidenceItem(attribute_type="skill", value=skill, confidence=0.7)],
+            projects=[ProjectData(
+                name=f"{login}-proj", url=f"https://github.com/{login}/proj",
+                technologies=[tech], activity={"stars": stars, "forks": 0},
+                last_active_at=last_active,
+            )],
+        ),
+    )
+
+
+def test_shipped_work_lifts_an_otherwise_identical_profile(session):
+    """Same stated skill, same sources — the one who built something leads."""
+    _with_project(session, name="Builder", login="builder", tech="Rust",
+                  stars=4000, last_active="2026-06-01")
+    _with_project(session, name="Claimer", login="claimer", tech="Rust",
+                  stars=0, last_active="2026-06-01")
+    rows = execute(session, parse(session, "rust"))
+    assert [p.canonical_name for p in rows][0] == "Builder"
+    assert rows[0].relevance["components"]["output"] > rows[-1].relevance["components"]["output"]
+
+
+def test_off_topic_fame_does_not_outrank_on_topic_work(session):
+    """A famous unrelated repo says you ship; it does not say you ship *this*."""
+    _with_project(session, name="On Topic", login="ontopic", tech="Rust",
+                  stars=800, last_active="2026-06-01")
+    _with_project(session, name="Famous Elsewhere", login="famous", tech="Cobol",
+                  stars=90000, last_active="2026-06-01")
+    rows = execute(session, parse(session, "rust"))
+    assert [p.canonical_name for p in rows][0] == "On Topic"
+
+
+def test_dormant_work_ranks_below_current_work(session):
+    """Equal impact, but one of them stopped years ago."""
+    _with_project(session, name="Still Active", login="active", tech="Rust",
+                  stars=500, last_active="2026-07-01")
+    _with_project(session, name="Long Dormant", login="dormant", tech="Rust",
+                  stars=500, last_active="2013-01-01")
+    rows = execute(session, parse(session, "rust"))
+    assert [p.canonical_name for p in rows][0] == "Still Active"
+    assert rows[0].relevance["components"]["recency"] > rows[-1].relevance["components"]["recency"]
+
+
+def test_citations_count_like_stars_so_researchers_are_not_buried(session):
+    """A cited paper and a starred repo are the same kind of evidence."""
+    from rip.normalize import PublicationData
+
+    _with_project(session, name="Repo Person", login="repo", tech="Robotics",
+                  stars=600, last_active="2026-06-01", skill="Robotics")
+    ingest_profile(
+        session,
+        make_profile(
+            name="Paper Person", external_id="paper", url="https://github.com/paper",
+            raw={"login": "paper"}, usernames=["github:paper"],
+            evidence=[EvidenceItem(attribute_type="skill", value="Robotics", confidence=0.7)],
+            publications=[PublicationData(
+                title="A robotics result", external_id="W1", citations=600,
+                published_date="2026-06-01", topics=["Robotics"],
+            )],
+        ),
+    )
+    rows = execute(session, parse(session, "robotics"))
+    out = {p.canonical_name: p.relevance["components"]["output"] for p in rows}
+    assert out["Paper Person"] == out["Repo Person"]

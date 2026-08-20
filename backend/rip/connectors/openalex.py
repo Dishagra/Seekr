@@ -9,6 +9,7 @@ Use `search_authors(name)` first to find candidate author IDs.
 """
 
 import os
+import re
 
 from ..normalize import (
     EvidenceItem,
@@ -19,6 +20,8 @@ from ..normalize import (
 from .base import BaseConnector
 
 API = "https://api.openalex.org"
+# 0000-0002-1825-0097, and the 009x ranges whose final character may be X
+ORCID_RE = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dXx]")
 MAX_WORKS = 25
 
 
@@ -86,9 +89,30 @@ class OpenAlexConnector(BaseConnector):
                     return list(seen.values())
         return list(seen.values())
 
+    @staticmethod
+    def _author_key(identifier: str) -> str:
+        """The lookup key OpenAlex actually accepts for this identifier.
+
+        An OpenAlex ID may arrive bare or as a URL, so the last path segment is
+        the right key. An ORCID must not be reduced that way: the bare number
+        404s and only the `orcid:` form resolves, which is why enrichment's
+        ORCID hop — the one that ties a scholarly identity to everything else —
+        silently failed on every author it was given.
+        """
+        ident = (identifier or "").strip()
+        tail = ident.rsplit("/", 1)[-1]
+        if ORCID_RE.fullmatch(tail):
+            return f"orcid:{tail}"
+        return tail
+
     def fetch(self, identifier: str) -> NormalizedProfile:
-        author_id = identifier.rsplit("/", 1)[-1]
-        author = self.get_json(f"{API}/authors/{author_id}", params=self._params())
+        author = self.get_json(
+            f"{API}/authors/{self._author_key(identifier)}", params=self._params()
+        )
+        # Works are filtered by the canonical OpenAlex ID from the author we
+        # just resolved — an `orcid:` key is valid for lookup but not as a
+        # value for author.id, so reusing the request key would return nothing.
+        author_id = author["id"].rsplit("/", 1)[-1]
         works = self.get_json(
             f"{API}/works",
             params=self._params(

@@ -10,8 +10,11 @@ A data layer that discovers, collects, normalizes, and maintains **evidence-back
 profiles of publicly discoverable people** — specialized experts and strong
 generalists — and exposes them through a clean read API.
 
-**This platform contains no ranking logic.** Scoring, matching, and
-prioritization belong to the downstream internal ranking tool:
+**`/v1/query` ranks; `/v1/persons` does not.** Natural-language search orders
+results by how well the evidence backs what was asked — see [Relevance
+ranking](#relevance-ranking). The faceted filter API stays deliberately
+unordered, so a downstream tool can still apply its own scoring to a raw
+match set.
 
 ```
 Internet / External Sources
@@ -19,8 +22,8 @@ Internet / External Sources
 Source → Connector → Raw SourceRecord → Normalizer → Entity Resolution → Resource DB
         ↓
 Resource API  (stable IDs, evidence, provenance, change feed)
-        ↓
-Existing Internal Ranking Tool
+        ↓                              ↓
+/v1/persons  (filters, unordered)   /v1/query  (filters + relevance ranking)
 ```
 
 ## Quick start
@@ -142,7 +145,7 @@ reassigned.
 |---|---|
 | `GET /v1/persons?...` | faceted people search — see filter table below (no ranking) |
 | `GET /v1/facets?field=` | available filter values + how many people carry each |
-| `GET /v1/query?q=` | natural-language search: query parsed into filters against the live vocabulary; response lists `applied_filters` and `unmatched_terms` honestly; results stay DB-ordered |
+| `GET /v1/query?q=` | natural-language search: query parsed into filters against the live vocabulary; response lists `applied_filters` and `unmatched_terms` honestly; results ranked by evidence, each carrying `score` + `score_components` |
 | `GET /ui` | internal exploration UI (archive-styled; token pasted in-page) |
 | `GET /v1/persons/{id}` | profile by stable UUID |
 | `GET /v1/persons/{id}/evidence?attribute_type=` | evidence with confidence + verification state |
@@ -159,6 +162,52 @@ reassigned.
 | `POST /v1/review/merges/{link_id}/split` | undo a merge: detach that source record (and all rows it produced) into a new person |
 
 OpenAPI docs at `/docs` when serving.
+
+## Relevance ranking
+
+`GET /v1/query` filters first, then ranks the matches. Filtering decides who is
+eligible; ranking decides who leads. Every result carries `score` and
+`score_components`, so a position in the list is always traceable to evidence
+rather than asserted:
+
+```json
+{ "canonical_name": "Abhishek Veeramalla", "score": 0.414,
+  "score_components": { "depth": 0.27, "confidence": 0.9,
+                        "corroboration": 0.0, "breadth": 0.431, "recency": 0.5 } }
+```
+
+| Signal | Weight | What it measures |
+|---|---|---|
+| `depth` | 0.25 | How much evidence backs the thing you asked for. A free-text bio mention counts at ¼ of a stated skill — it separates someone from nobody without outranking a decade of commits. |
+| `output` | 0.25 | Work they actually shipped, and how far it landed: repository stars and forks, publication citations. On-topic work counts fully; unrelated work at ¼, so a famous side project never outranks someone who built the thing you asked about. |
+| `confidence` | 0.15 | How strongly the source stated it. GitHub scales this by repository count, so it carries much of the volume signal for developers. |
+| `recency` | 0.15 | Age of the newest thing we can date — a repository still being pushed to, a paper published, dated evidence — on a 2-year half-life. Undated scores a neutral 0.5: most sources never state a date, and treating "unknown" as "ancient" would bury the entire GitHub corpus. Off-topic work never sets recency, or a side repo would make a dormant specialism look current. |
+| `corroboration` | 0.10 | Independent sources making the same claim (`verification_state = corroborated`). Needs enrichment, and needs the sources to share a strong key. |
+| `breadth` | 0.10 | How many sources know this person at all, split merges excluded. |
+
+**Projects and publications are one signal on purpose.** Stars and citations
+are the same kind of evidence — work put out and taken up — and scoring them
+separately would mean a developer outranks a researcher for reasons of source
+rather than merit.
+
+Counts are log-scaled to saturation points (12 evidence rows, 4 sources, 5,000
+combined stars + citations): the 20th repository should not outweigh everything
+else. Ties keep filter order, so equal-evidence results stay stable across
+pages.
+
+A deliberately plain linear blend, not a learned model — every result can
+explain itself, and `match_feedback` has to accumulate real judgements before
+anything can be trained on them. Weights live in `WEIGHTS` in `rip/nlq.py`.
+
+**Two-stage retrieval.** Ranking needs to see the field before it can pick a
+winner, so the filter yields a candidate pool (`RIP_CANDIDATE_POOL`, default
+500) that is scored and *then* paged. `total_matches` still reports the true
+filter count; paging deeper than the pool is not a meaningful request of a
+ranked list.
+
+Set `RIP_VOCAB_TTL` (default 60s) to tune how long the query vocabulary is
+cached — it is four `SELECT DISTINCT`s over the corpus, and rebuilding it per
+request costs more than everything else in a query put together.
 
 ## Search filters
 
@@ -367,23 +416,121 @@ backend/
     resolution.py entity resolution strategies
     ingest.py     pipeline: upsert record → resolve → apply → change log
     nlq.py        natural-language query parsing + live discovery
-    api.py        FastAPI read API; serves frontend/ at /ui and /static
+    api.py        FastAPI read API; serves the built UI at /ui and /static
     cli.py        init-db / ingest / search-openalex / refresh / serve
     connectors/   github.py, openalex.py, exa.py, base.py (polite HTTP)
   scripts/        snapshot build, Postgres migration, benchmarks, nightly cron
   tests/          resolution + ingestion tests (fixture-based, no network)
 
-frontend/
-  index.html      the page shell
-  styles.css      design tokens, layout, motion
-  app.js          hash router, API client, rendering
-  assets/         brand mark
+web/              the React app — this is what you edit
+  src/
+    main.tsx      entry; applies the saved theme before first paint
+    App.tsx       routes (hash-based) and the auth gate
+    api/client.ts the one door to the backend; bearer auth, 401 handling
+    types.ts      the shapes /v1 returns
+    pages/        Search, Person, Shortlists, Review, Sources, Gate
+    components/   Shell, Filters, ResultsTable, Network, EmptyState
+    lib/          icons, brand links, the traced mark, formatting, hooks
+    styles.css    design tokens, layout, motion
+  vite.config.ts  builds into ../frontend, proxies /v1 in dev
+
+frontend/         BUILD OUTPUT — generated by `npm run build`, do not edit
 ```
 
-The two halves talk over HTTP and nothing else: the frontend is plain
-HTML/CSS/JS with no build step, and the backend serves it as static files.
-Editing the interface means editing those three files — no Python involved,
-no bundler, reload the page and it is there.
+The two halves talk over HTTP and nothing else. The frontend is a React +
+TypeScript single-page app built by Vite; the backend serves the built files
+as static assets and never renders HTML.
+
+`frontend/` is committed rather than ignored because the deploy target runs
+Python only — it never runs npm — so the built bundle has to be in the
+repository for `/ui` to work in production. Treat it as an artefact: edit
+`web/`, run the build, commit both.
+
+### Working on the frontend
+
+```bash
+cd web && npm install
+```
+
+Two ways to run it. For frontend work, Vite's dev server gives hot reload and
+proxies `/v1` to the API on port 8000:
+
+```bash
+cd web && npm run dev
+```
+
+For everything else, build once and let the backend serve it — same URL,
+same `/ui`, no second process:
+
+```bash
+cd web && npm run build
+```
+
+`npm run typecheck` runs TypeScript with no emit, which is what CI should
+gate on.
+
+## Deploying
+
+**Handing this to someone who will deploy it? Start at
+[deploy/README.md](deploy/README.md)** — the database decision, a local
+Postgres stack to try first, and Kubernetes manifests.
+
+## Deploying with Docker
+
+One image serves the API and the UI on port 8000. The UI is built from `web/`
+inside the image, so what ships is what the source says, not whatever bundle
+happened to be committed.
+
+```bash
+docker build -t seekr .
+```
+
+```bash
+docker run -d --name seekr -p 8000:8000 \
+  -v seekr-data:/data \
+  -e RIP_API_TOKEN=<a long random string> \
+  --env-file .env \
+  seekr
+```
+
+The UI is then at `http://localhost:8000/ui`.
+
+**Set `RIP_API_TOKEN`.** Without it every `/v1` route is open, and these
+routes return personal data about real people. The container starts either
+way and says which mode it is in on the first line of its log — read it.
+
+**`/data` is a volume, and it is the graph.** A container filesystem is
+disposable; the SQLite file must not be. `RIP_DATABASE_URL` already points at
+`/data/rip.db`, and the schema is created on first start, so an empty volume
+is a valid starting point. To carry an existing graph in, take a consistent
+snapshot rather than copying the file — a live database has un-checkpointed
+WAL beside it, and copying the three files separately produces a torn read:
+
+```bash
+python -c "import sqlite3; sqlite3.connect('rip.db').execute('VACUUM INTO ?', ('seed.db',))"
+```
+
+Then place `seed.db` in the volume as `rip.db` before the first start.
+
+**Secrets come from the environment, never the image.** `.env` and every
+`*.db` are excluded by `.dockerignore`, so a build cannot bake in a token or
+a copy of the graph. Pass them at run time with `--env-file` or `-e`.
+
+The image runs as UID 10001, not root. On a Linux host using a bind mount
+rather than a named volume, `chown -R 10001:10001 ./data` first, or the
+process cannot write.
+
+### Notes for a real deployment
+
+- **One worker.** SQLite takes one writer, and `serve` enforces that. To run
+  more than one process, move to Postgres via `RIP_DATABASE_URL` — the
+  connection pool settings in `db.py` already switch on for server-backed
+  engines.
+- **Ingestion is not this container's job.** It serves. Run `ingest`,
+  `refresh` and `deliver-webhooks` as separate jobs against the same volume
+  or database.
+- **Health.** `HEALTHCHECK` polls `/`, which needs no token and touches no
+  tables, so it reports the process rather than the data.
 
 ## Running the full build
 

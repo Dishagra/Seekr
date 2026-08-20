@@ -15,10 +15,10 @@ import re
 from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz
-from sqlalchemy import func, literal, or_, select
+from sqlalchemy import case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
-from .models import Evidence, Organization, Person
+from .models import Evidence, IdentityLink, Organization, Person
 
 logger = logging.getLogger("rip.nlq")
 
@@ -256,8 +256,50 @@ def _is_generic(term: str, df: dict, vocab_size: int) -> bool:
     return n > max(GENERIC_DF_ABSOLUTE, vocab_size * GENERIC_DF_RATIO)
 
 
+# The vocabulary is four SELECT DISTINCTs over the whole corpus. Rebuilding it
+# per query costs more than everything else in a request put together, so it is
+# cached and rebuilt only when the corpus actually changed. Ingest runs in a
+# separate process, so a short TTL covers writes we never hear about; anything
+# that adds people inside this process calls invalidate_vocab() directly.
+VOCAB_TTL_SECONDS = float(os.environ.get("RIP_VOCAB_TTL", "60"))
+# Keyed by the engine the session is bound to, never process-global: one
+# process can legitimately talk to more than one database (the test suite
+# builds a fresh in-memory engine per test), and a shared entry would hand
+# one database's vocabulary to another.
+_vocab_cache: dict[int, tuple[float, tuple[dict, dict, dict]]] = {}
+
+
+def invalidate_vocab(session: Session | None = None) -> None:
+    """Drop the cached vocabulary — call after storing people mid-request.
+
+    Live discovery writes new people and then re-parses the same query so the
+    terms it just learned become real filters. Without this the re-parse would
+    read a stale vocabulary and the people we just fetched stay invisible to
+    the very query that fetched them.
+
+    Pass a session to clear just that database, or nothing to clear all.
+    """
+    if session is None:
+        _vocab_cache.clear()
+    else:
+        _vocab_cache.pop(id(session.get_bind()), None)
+
+
 def _vocab(session: Session) -> tuple[dict, dict, dict]:
     """(skills, orgs, locations) lowercase -> canonical value, from live data."""
+    import time
+
+    key = id(session.get_bind())
+    cached = _vocab_cache.get(key)
+    if cached is not None and (time.monotonic() - cached[0]) < VOCAB_TTL_SECONDS:
+        return cached[1]
+    built = _build_vocab(session)
+    _vocab_cache[key] = (time.monotonic(), built)
+    return built
+
+
+def _build_vocab(session: Session) -> tuple[dict, dict, dict]:
+    """The uncached scan. Call _vocab() instead unless you need fresh data."""
     skills = {
         v.lower(): v
         for (v,) in session.execute(
@@ -833,28 +875,320 @@ def diagnose_empty(session: Session, parsed: NLQuery) -> dict | None:
     return None
 
 
+# How many filter matches to score before paging. Filtering says who is
+# eligible; ranking says who is best, and it cannot say that over a page it
+# has already been handed. Deep paging past this is not a meaningful request
+# of a ranked list — total_matches still reports the true filter count.
+CANDIDATE_POOL = int(os.environ.get("RIP_CANDIDATE_POOL", "500"))
+
+# What "better profile" means, as weights that sum to 1. Deliberately a plain
+# linear blend rather than a learned model: every result can explain itself,
+# and match_feedback has to accumulate real judgements before anything can be
+# trained on them.
+WEIGHTS = {
+    "depth": 0.25,          # how much evidence backs the thing you asked for
+    "output": 0.25,         # work they actually shipped, and how much it landed
+    "confidence": 0.15,     # how strongly the source stated it
+    "recency": 0.15,        # how recent the evidence is, where dated
+    "corroboration": 0.10,  # independent sources agreeing
+    "breadth": 0.10,        # how many sources know this person at all
+}
+# Saturation points: past this many rows the signal stops distinguishing
+# people, so it is scaled logarithmically rather than left unbounded.
+DEPTH_SATURATION = 12.0
+BREADTH_SATURATION = 4.0
+RECENCY_HALF_LIFE_DAYS = 730.0
+# Combined stars + citations at which output stops distinguishing people.
+# Log-scaled, so a 240k-star repository does not flatten everyone else. Tuned
+# against a real sample: at 500 a widely-followed maintainer and someone with a
+# single 500-star repo both scored a flat 1.0, which is exactly the tie this
+# signal exists to break. 5,000 is genuinely notable for stars and for
+# citations alike, and keeps the field spread.
+OUTPUT_SATURATION = 5000.0
+# Work that is real but not what you asked about. It still says this person
+# ships things, so it counts — at a quarter, so an unrelated famous repo never
+# outranks on-topic work.
+OFF_TOPIC_WEIGHT = 0.25
+# A fork is a weaker signal of impact than a star: it costs one click and is
+# routinely done to read code rather than to endorse it.
+FORK_WEIGHT = 0.5
+
+
+def _log_scale(value: float, saturation: float) -> float:
+    """Bounded 0..1 growth — the 20th repo matters less than the 2nd."""
+    import math
+
+    if value <= 0:
+        return 0.0
+    return min(1.0, math.log1p(value) / math.log1p(saturation))
+
+
+# A bio saying "I work on machine learning" is real evidence, but it is a
+# self-description, not a body of work — it should separate someone from
+# nobody without ever outranking a decade of commits.
+TEXT_EVIDENCE_WEIGHT = 0.25
+
+
+def _matched_evidence_clause(parsed: NLQuery):
+    """Evidence rows that back what the query asked for, and how they count.
+
+    Returns (clause, weight_case): the clause selects rows to score, and the
+    CASE assigns each row its weight — full for a skill the source stated
+    outright, a fraction for a passing mention in free text.
+    """
+    from sqlalchemy import and_
+
+    clauses = []
+    for group in parsed.skill_groups:
+        if group.get("values"):
+            clauses.append(and_(
+                Evidence.attribute_type.in_(SKILL_ATTRS),
+                func.lower(Evidence.value).in_([v.lower() for v in group["values"]]),
+            ))
+        if group.get("pattern"):
+            clauses.append(and_(
+                Evidence.attribute_type.in_(SKILL_ATTRS),
+                func.lower(Evidence.value).like(f"%{group['pattern'].lower()}%"),
+            ))
+        # The raw term against free text — the same clause the filter uses, so
+        # anything that passed the filter can also be scored. Without this a
+        # bio-only match scores a flat zero and every such person ties.
+        term = (group.get("term") or "").lower()
+        if len(term) >= 4:
+            clauses.append(and_(
+                Evidence.attribute_type.in_(("bio", "role")),
+                func.lower(Evidence.value).like(f"%{term}%"),
+            ))
+    if not clauses:
+        return None, None
+    weight = case(
+        (Evidence.attribute_type.in_(SKILL_ATTRS), 1.0),
+        else_=TEXT_EVIDENCE_WEIGHT,
+    )
+    return or_(*clauses), weight
+
+
+def _query_terms(parsed: NLQuery) -> set[str]:
+    """Every phrasing of what the query asked for, lowercased."""
+    terms: set[str] = set()
+    for group in parsed.skill_groups:
+        for value in group.get("values") or []:
+            terms.add(value.lower())
+        for key in ("pattern", "term"):
+            if group.get(key):
+                terms.add(str(group[key]).lower())
+    return {t for t in terms if t}
+
+
+def _parse_loose_date(text: str | None):
+    """Dates arrive as 'YYYY', 'YYYY-MM' or 'YYYY-MM-DD' depending on source."""
+    from datetime import datetime
+
+    text = (text or "").strip()[:10]
+    for fmt in ("%Y-%m-%d", "%Y-%m", "%Y"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _output_signals(
+    session: Session, parsed: NLQuery, ids: list[str]
+) -> tuple[dict[str, float], dict[str, object]]:
+    """Work shipped, and when it was last touched.
+
+    Evidence says someone claims a skill; this says what they built with it.
+    Projects and publications are scored on one axis on purpose — stars and
+    citations are the same kind of signal, and ranking them apart would mean a
+    developer always outranks a researcher for reasons of source, not merit.
+
+    Returns ({person_id: weighted impact}, {person_id: latest date}).
+    """
+    from .models import Authorship, Contribution, Project, Publication
+
+    impact: dict[str, float] = {}
+    latest: dict[str, object] = {}
+    terms = _query_terms(parsed)
+
+    def record(pid, value, matched, when):
+        weight = 1.0 if (matched or not terms) else OFF_TOPIC_WEIGHT
+        impact[pid] = impact.get(pid, 0.0) + max(0.0, value) * weight
+        parsed_when = _parse_loose_date(when)
+        # An off-topic project should not set someone's recency — otherwise a
+        # side repo makes a decade-dormant specialism look current.
+        if parsed_when and (matched or not terms):
+            if pid not in latest or parsed_when > latest[pid]:
+                latest[pid] = parsed_when
+
+    rows = session.execute(
+        select(
+            Contribution.person_id, Project.technologies, Project.name,
+            Project.activity, Project.last_active_at,
+        )
+        .join(Project, Project.id == Contribution.project_id)
+        .where(Contribution.person_id.in_(ids))
+    ).all()
+    for pid, techs, name, activity, last_active in rows:
+        activity = activity or {}
+        stars = float(activity.get("stars") or 0)
+        forks = float(activity.get("forks") or 0)
+        haystack = {str(t).lower() for t in (techs or [])} | {(name or "").lower()}
+        matched = any(t in h for t in terms for h in haystack)
+        record(pid, stars + forks * FORK_WEIGHT, matched, last_active)
+
+    pubs = session.execute(
+        select(
+            Authorship.person_id, Publication.topics, Publication.title,
+            Publication.citations, Publication.published_date,
+        )
+        .join(Publication, Publication.id == Authorship.publication_id)
+        .where(Authorship.person_id.in_(ids))
+    ).all()
+    for pid, topics, title, citations, published in pubs:
+        haystack = {str(t).lower() for t in (topics or [])} | {(title or "").lower()}
+        matched = any(t in h for t in terms for h in haystack)
+        record(pid, float(citations or 0), matched, published)
+
+    return impact, latest
+
+
+def relevance_scores(
+    session: Session, parsed: NLQuery, ids: list[str]
+) -> dict[str, dict]:
+    """Score each candidate, and record why. Returns {person_id: {...}}.
+
+    The breakdown travels with the score on purpose: a ranked list nobody can
+    interrogate is exactly the thing this codebase spent its whole design
+    avoiding. Every component here traces back to evidence rows.
+    """
+    from datetime import datetime, timezone
+
+    if not ids:
+        return {}
+
+    depth: dict[str, float] = {}
+    best_conf: dict[str, float] = {}
+    corroborated: dict[str, int] = {}
+    latest: dict[str, datetime] = {}
+
+    matched, weight = _matched_evidence_clause(parsed)
+    if matched is not None:
+        stmt = (
+            select(
+                Evidence.person_id,
+                func.sum(weight),
+                # A stated skill sets the confidence ceiling; a bio mention is
+                # scaled down so free text cannot present as a strong claim.
+                func.max(Evidence.confidence * weight),
+                func.sum(
+                    case((Evidence.verification_state == "corroborated", 1), else_=0)
+                ),
+                func.max(Evidence.published_at),
+            )
+            .where(Evidence.person_id.in_(ids), matched)
+            .group_by(Evidence.person_id)
+        )
+        for pid, n, conf, corr, pub in session.execute(stmt).all():
+            depth[pid] = float(n or 0.0)
+            best_conf[pid] = float(conf or 0.0)
+            corroborated[pid] = int(corr or 0)
+            if pub:
+                latest[pid] = pub
+
+    # How many independent sources know this person at all. Someone confirmed
+    # across GitHub, ORCID and dblp is a more solid record than a lone profile,
+    # regardless of what was asked for.
+    breadth: dict[str, int] = {}
+    for pid, n in session.execute(
+        select(IdentityLink.person_id, func.count(IdentityLink.id))
+        .where(
+            IdentityLink.person_id.in_(ids),
+            IdentityLink.review_state != "split",
+        )
+        .group_by(IdentityLink.person_id)
+    ).all():
+        breadth[pid] = n or 0
+
+    impact, shipped_at = _output_signals(session, parsed, ids)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    out: dict[str, dict] = {}
+    for pid in ids:
+        parts = {
+            "depth": _log_scale(depth.get(pid, 0.0), DEPTH_SATURATION),
+            "output": _log_scale(impact.get(pid, 0.0), OUTPUT_SATURATION),
+            "confidence": best_conf.get(pid, 0.0),
+            "corroboration": _log_scale(corroborated.get(pid, 0), 3.0),
+            "breadth": _log_scale(breadth.get(pid, 0), BREADTH_SATURATION),
+        }
+        # The most recent thing we can date: a repository still being pushed to,
+        # a paper published, or dated evidence. Undated scores a neutral 0.5 —
+        # most sources never state a date, and treating "unknown" as "ancient"
+        # would rank the whole GitHub corpus below anyone with one dated paper.
+        dates = [d for d in (latest.get(pid), shipped_at.get(pid)) if d is not None]
+        if not dates:
+            parts["recency"] = 0.5
+        else:
+            age_days = max(0.0, (now - max(dates)).total_seconds() / 86400.0)
+            parts["recency"] = 0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS)
+        score = sum(WEIGHTS[k] * v for k, v in parts.items())
+        out[pid] = {
+            "score": round(score, 4),
+            "components": {k: round(v, 3) for k, v in parts.items()},
+            "matched_evidence": round(depth.get(pid, 0.0), 2),
+            "sources": breadth.get(pid, 0),
+            "impact": round(impact.get(pid, 0.0), 1),
+        }
+    return out
+
+
 def execute(session: Session, parsed: NLQuery) -> list[Person]:
-    """Apply the parsed filters. No ranking: DB order, one page at a time.
+    """Filter, then rank: strongest evidence for what was asked comes first.
+
+    Filtering decides who is eligible; ranking decides who leads. Returning
+    filter matches in insertion order made person #4 indistinguishable from
+    person #400, and truncating that at LIMIT discarded good candidates before
+    anyone saw them.
 
     If NOTHING in the query matched the corpus vocabulary, return nothing.
     An unfiltered SELECT would hand back arbitrary people that look like
     answers to a question we could not actually answer.
+
+    Each returned Person carries `relevance` (score + component breakdown) as
+    a plain attribute — it is a property of this query, not of the person, so
+    it is deliberately not persisted.
     """
     if not has_filters(parsed):
         return []
     stmt = _filtered_stmt(parsed)
     # de-duplicate on id, not whole rows: Postgres cannot DISTINCT a JSON column
+    pool_size = max(CANDIDATE_POOL, parsed.offset + parsed.limit)
     ids = session.execute(
-        stmt.with_only_columns(Person.id)
-        .distinct()
-        .limit(parsed.limit)
-        .offset(parsed.offset)
+        stmt.with_only_columns(Person.id).distinct().limit(pool_size)
     ).scalars().all()
     if not ids:
         return []
+
+    scored = relevance_scores(session, parsed, list(ids))
+    # Ties keep their filter order, so equal-evidence results stay stable
+    # across requests instead of shuffling between pages.
+    order = {pid: i for i, pid in enumerate(ids)}
+    ranked = sorted(ids, key=lambda p: (-scored.get(p, {}).get("score", 0.0), order[p]))
+    page = ranked[parsed.offset : parsed.offset + parsed.limit]
+    if not page:
+        return []
+
     rows = {p.id: p for p in session.execute(
-        select(Person).where(Person.id.in_(ids))).scalars()}
-    return [rows[i] for i in ids if i in rows]
+        select(Person).where(Person.id.in_(page))).scalars()}
+    out = []
+    for pid in page:
+        person = rows.get(pid)
+        if person is None:
+            continue
+        person.relevance = scored.get(pid, {"score": 0.0, "components": {}})
+        out.append(person)
+    return out
 
 
 def _search_openalex(query: str, limit: int) -> list[dict]:
@@ -1164,11 +1498,7 @@ NOT_A_PERSON = re.compile(
     r"|editor|editorial|anonymous|unknown|staff|admin"
     r"|community|collective|network|alliance|federation|council|forum|club"
     r"|hub|labs?|studios?|systems|tech|technologies|solutions|official|bot"
-    r"|software|digital|media|ventures|partners|holdings|pvt|private|limited"
-    r"|open.?source|modelling|modeling|simulation|toolkit|framework|benchmark"
-    r"|dataset|initiative|programme|program office|working group"
-    r"|compagnia|fondazione|stiftung|instituto|observatory|agency|ministry"
-    r"|academy|trust|charity|bureau|authority)\b",
+    r"|software|digital|media|ventures|partners|holdings|pvt|private|limited)\b",
     re.IGNORECASE,
 )
 
@@ -1205,9 +1535,7 @@ def _matches_only_the_name(profile, term: str) -> bool:
             + [getattr(pr, "description", "") or "" for pr in (profile.projects or [])]
         )
     )
-    in_name = any(w in name_hay for w in words)
-    in_body = any(w in body_hay for w in words)
-    return in_name and not in_body
+    return any(w in name_hay for w in words) and not any(w in body_hay for w in words)
 
 
 def _looks_like_a_person(name: str | None) -> bool:

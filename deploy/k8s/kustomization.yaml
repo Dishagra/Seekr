@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: seekr
+
+# secret.example.yaml is deliberately absent: it is a template with a
+# placeholder token in it, and applying it would start the API wide open.
+# Create the real Secret out of band — the header of that file has the command.
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - poddisruptionbudget.yaml
+  - hpa.yaml
+  - cronjob-nightly.yaml
+
+# `labels` rather than the deprecated `commonLabels`, and deliberately NOT
+# applied to selectors: a Deployment's selector is immutable once created, so
+# letting kustomize write into it turns any future label change into a
+# delete-and-recreate. Each manifest already declares the selector it needs.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: seekr
+    includeSelectors: false
+
+# Set the built tag in one place for the Deployment and both CronJobs:
+#   kustomize edit set image ACCOUNT.dkr.ecr.REGION.amazonaws.com/seekr=...:sha-abc123
+images:
+  - name: ACCOUNT.dkr.ecr.REGION.amazonaws.com/seekr
+    newTag: REPLACE_ME

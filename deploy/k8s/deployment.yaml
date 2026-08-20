@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seekr
+  namespace: seekr
+  labels:
+    app.kubernetes.io/name: seekr
+    app.kubernetes.io/component: api
+spec:
+  # Safe above 1 ONLY on Postgres. On SQLite the graph is a single file that
+  # two pods cannot share, and the process forces a single worker anyway.
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seekr
+      app.kubernetes.io/component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seekr
+        app.kubernetes.io/component: api
+    spec:
+      # Pod-level, so the CSI-mounted secret files and the /tmp volume are
+      # owned by the same user the container runs as.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: seekr
+          # REPLACE: the ECR repository and an immutable tag. Never :latest —
+          # a rollback needs a digest or a tag that still means what it meant.
+          image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/seekr:REPLACE_ME
+          imagePullPolicy: IfNotPresent
+
+          # The image already binds 0.0.0.0:8000; no command override needed.
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          envFrom:
+            - secretRef:
+                name: seekr
+
+          # Verified: the app writes nothing outside the database, so the root
+          # filesystem can be read-only. /tmp is still needed — the HTTP client
+          # uses it — hence the emptyDir below.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+          # `/` needs no token and reads no tables, so it reports that the
+          # process is up without depending on the graph being populated.
+          #
+          # The startup probe exists because the first boot against a fresh
+          # database creates 23 tables and runs additive migrations. Giving
+          # that its own budget means the liveness probe can stay tight
+          # afterwards instead of being loosened to cover a one-off.
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 3
+            failureThreshold: 20      # up to 60s to become ready
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Ranking scores a capped candidate pool in Python, so this is
+          # CPU-bound before it is memory-bound. These are a starting point
+          # measured against nothing — set them from real traffic.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+      # uvicorn stops accepting on SIGTERM and drains in-flight requests. A
+      # live search can be waiting on a slow third-party API, so give it room.
+      terminationGracePeriodSeconds: 45
+
+      # Keep the two replicas off one node, but do not block scheduling on a
+      # single-node cluster.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: seekr
+              app.kubernetes.io/component: api
