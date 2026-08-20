@@ -28,3 +28,4 @@ dist/
 # Tooling
 .vercel
 .DS_Store
+seekr.log
