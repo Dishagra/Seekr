@@ -1005,7 +1005,10 @@ def nl_query(
                 row["from_live_search"] = row["id"] in live_set
             response["results"] = rows
             response["count"] = len(persons)
-            response["total_matches"] = count_matches(db, parsed)
+            # People the live search returned are results, so the total has to
+            # count them. Reporting only the corpus count printed "1 of 0
+            # matching" — a row on screen that the total said did not exist.
+            response["total_matches"] = max(count_matches(db, parsed), len(persons))
             response["unmatched_terms"] = parsed.unmatched_terms
             response["applied_filters"] = {
                 "skills": parsed.skills, "skill_patterns": parsed.skill_patterns,

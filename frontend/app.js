@@ -2,10 +2,17 @@ const $ = (s, r=document)=>r.querySelector(s);
 const esc = (s)=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = (n)=>(n??0).toLocaleString();
 
+/* The Deccan mark, defined once. A continuous loop whose right side tucks
+   inward before running down to a tip left of centre — that tuck is what
+   makes it recognisable, and the egg shape I had first is not it. */
+const MARK_PATH = "M246 56C322 58 388 108 404 174C418 236 360 300 316 352C286 388 252 436 230 480C212 516 168 520 145 489C110 444 78 372 68 292C58 210 68 132 114 94C152 62 192 54 246 56Z";
+const markSvg = (cls, size) =>
+  `<svg class="${cls}" width="${size}" height="${size}" viewBox="0 0 460 560" fill="none" aria-hidden="true">`
+  + `<path d="${MARK_PATH}" stroke="currentColor" stroke-width="38"`
+  + ` stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
 const ICON = {
-  // Deccan AI's mark: one continuous hand-drawn loop. Inline rather than an
-  // <img> so it takes the surrounding colour in either theme.
-  logo:'<svg width="16" height="16" viewBox="0 0 512 512" fill="none" aria-hidden="true"><path d="M241 44c58 2 108 34 141 78 24 32 34 66 20 104-11 30-34 54-56 79-27 30-45 62-56 101-11 38-36 62-70 61-33-1-56-27-66-64-9-33-13-68-14-104-1-40-3-80 5-118C155 129 187 78 241 44Z" stroke="currentColor" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  logo: markSvg('', 15),
   search:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg>',
   people:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="3.2"/><path d="M22 20v-2a4 4 0 0 0-3-3.87"/></svg>',
   review:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
@@ -88,6 +95,7 @@ function shell(active, topbar, body){
       </div>
     </aside>
     <main>
+      ${active==="#/search" ? `<div class="backdrop" aria-hidden="true">${markSvg("", 720)}</div>` : ""}
       <div class="topbar">${topbar}</div>
       <div class="page" id="page">${body}</div>
     </main>
@@ -345,7 +353,7 @@ function clearFilters(){
 }
 
 // Waiting is drawn with the brand mark rather than a generic spinner.
-const MARK_LOADER = '<svg class="markload" viewBox="0 0 512 512" fill="none" aria-hidden="true"><path d="M241 44c58 2 108 34 141 78 24 32 34 66 20 104-11 30-34 54-56 79-27 30-45 62-56 101-11 38-36 62-70 61-33-1-56-27-66-64-9-33-13-68-14-104-1-40-3-80 5-118C155 129 187 78 241 44Z" stroke="currentColor" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const MARK_LOADER = markSvg('markload', 34);
 function busy(msg){ $("#results").innerHTML = `<div class="loading">${MARK_LOADER}${esc(msg)}</div>`; }
 
 async function runQuery(discover, offset){
@@ -505,7 +513,7 @@ function renderResults(data, opts={}){
 function emptyState(title, body, action, extraHtml){
   // body is escaped; extraHtml is markup we built ourselves
   return `<div class="card"><div class="empty">
-    <div class="icon">${ICON.empty}</div>
+    <div class="icon markempty">${markSvg("", 30)}</div>
     <h3>${esc(title)}</h3><p>${esc(body)}</p>${extraHtml||""}${action||""}
   </div></div>`;
 }

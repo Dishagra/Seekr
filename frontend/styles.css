@@ -94,7 +94,21 @@ nav a svg{flex:none; opacity:.85}
 }
 .themebtn:hover{background:var(--surface2); color:var(--ink)}
 
-main{min-width:0; display:flex; flex-direction:column}
+main{min-width:0; display:flex; flex-direction:column; position:relative; overflow:hidden}
+/* The mark, enormous and nearly invisible, anchored off the bottom-right so
+   the loop reads as a shape in the paper rather than a picture on it. Low
+   enough in contrast that text over it is unaffected; hidden on narrow
+   screens where it would crowd the content instead of framing it. */
+.backdrop{
+  /* Fixed, not absolute: anchored to the bottom of a tall page it sits below
+     the fold and is never seen. */
+  position:fixed; right:-200px; bottom:-250px; z-index:0;
+  color:var(--ink); opacity:.055; pointer-events:none; user-select:none;
+  transform:rotate(-8deg);
+}
+.backdrop svg{display:block}
+@media (max-width:900px){ .backdrop{display:none} }
+.topbar, .page{position:relative; z-index:1}
 .topbar{
   position:sticky; top:0; z-index:20; background:color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter:blur(8px); border-bottom:1px solid var(--line); padding:14px 28px;
@@ -171,6 +185,8 @@ input.search:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3p
   background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm);
 }
 .fgrid input:focus, .fgrid select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+.markempty{color:var(--faint); display:grid; place-items:center}
+.markempty svg{display:block}
 .whylist{list-style:none; margin:12px 0 0; padding:0; display:flex; gap:6px;
   flex-wrap:wrap; justify-content:center; font-size:12px; color:var(--muted)}
 .whylist li{border:1px solid var(--line); border-radius:6px; padding:3px 8px}
@@ -268,14 +284,16 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
    moment the product signs its name. */
 .markload{width:34px; height:34px; color:var(--ink); display:block; margin:0 auto 14px}
 .markload path{
-  stroke-dasharray:1400; stroke-dashoffset:1400;
+  /* 1250 is the measured length of the mark path, rounded up. Tuned to the
+     old shape it under-drew and the loop never closed. */
+  stroke-dasharray:1250; stroke-dashoffset:1250;
   animation:draw 1.9s var(--ease) infinite;
 }
 @keyframes draw{
-  0%{stroke-dashoffset:1400; opacity:.25}
+  0%{stroke-dashoffset:1250; opacity:.25}
   45%{stroke-dashoffset:0; opacity:1}
-  75%{stroke-dashoffset:0; opacity:1}
-  100%{stroke-dashoffset:-1400; opacity:.25}
+  72%{stroke-dashoffset:0; opacity:1}
+  100%{stroke-dashoffset:-1250; opacity:.25}
 }
 .spinner{
   width:18px; height:18px; border:2px solid var(--line); border-top-color:var(--accent);
