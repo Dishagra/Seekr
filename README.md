@@ -555,6 +555,9 @@ process cannot write.
 - **Health.** `HEALTHCHECK` polls `/`, which needs no token and touches no
   tables, so it reports the process rather than the data.
 
+> **Deploying this?** `DEPLOYMENT.md` has the instructions, and says
+> which of them have been verified and which have not.
+
 ## Running the full build
 
 This is the version with every capability. One command:
