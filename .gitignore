@@ -32,3 +32,9 @@ seekr.log
 demo/frames/
 demo/check/
 demo/film.log
+demo/edit/
+demo/audio/
+demo/sequence.txt
+demo/cues.json
+demo/marks.json
+demo/speed.txt
