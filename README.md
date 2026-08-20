@@ -123,7 +123,7 @@ records both sides with their provenance (`GET /v1/persons/{id}/conflicts`).
 
 ## Entity resolution
 
-Order of strategies (see `rip/resolution.py`):
+Order of strategies (see `backend/rip/resolution.py`):
 
 1. **Deterministic** — any strong key already attached to a person
    (ORCID, public email, source username, normalized profile/website URL)
@@ -208,15 +208,15 @@ menus from live data instead of a hardcoded list.
 Every ingest follows the identity signals it finds — an ORCID in a GitHub bio,
 an OpenAlex ID on an ORCID record, a homepage on a dblp page — up to 3 hops,
 skipping sources already stored and never letting a failed hop fail the root
-ingest (`rip/enrich.py`). So `ingest github <user>` can yield a GitHub +
+ingest (`backend/rip/enrich.py`). So `ingest github <user>` can yield a GitHub +
 ORCID + OpenAlex + homepage profile in one command. Disable with
 `--no-enrich`.
 
-Adding a source = one file in `rip/connectors/` emitting a
-`NormalizedProfile` (see `rip/normalize.py`) + one registry line in
-`rip/connectors/__init__.py`. Nothing in the core pipeline changes.
+Adding a source = one file in `backend/rip/connectors/` emitting a
+`NormalizedProfile` (see `backend/rip/normalize.py`) + one registry line in
+`backend/rip/connectors/__init__.py`. Nothing in the core pipeline changes.
 
-The base connector (`rip/connectors/base.py`) provides polite HTTP: minimum
+The base connector (`backend/rip/connectors/base.py`) provides polite HTTP: minimum
 request interval, retry with backoff on 5xx, rate-limit detection
 (429 / `x-ratelimit-remaining`) honoring `Retry-After`.
 
@@ -330,7 +330,7 @@ LinkedIn and Naukri forbid automated access in terms you accept by using them.
 
 ## Bulk discovery
 
-`rip/discover.py` mines existing source records for people not yet ingested
+`backend/rip/discover.py` mines existing source records for people not yet ingested
 and queues them as `DiscoveryLead` rows (unique per source+identifier,
 skipping anyone already ingested):
 
@@ -359,17 +359,31 @@ time under your control.
 ## Repository layout
 
 ```
-rip/
-  db.py           engine/session, RIP_DATABASE_URL
-  models.py       schema (person, source_record, evidence, edges, change_log, ...)
-  normalize.py    NormalizedProfile IR + strong-key extraction
-  resolution.py   entity resolution strategies
-  ingest.py       pipeline: upsert record → resolve → apply → change log
-  api.py          FastAPI read API
-  cli.py          init-db / ingest / search-openalex / refresh / serve
-  connectors/     github.py, openalex.py, base.py (polite HTTP)
-tests/            resolution + ingestion tests (fixture-based, no network)
+backend/
+  rip/
+    db.py         engine/session, RIP_DATABASE_URL
+    models.py     schema (person, source_record, evidence, edges, change_log, ...)
+    normalize.py  NormalizedProfile IR + strong-key extraction
+    resolution.py entity resolution strategies
+    ingest.py     pipeline: upsert record → resolve → apply → change log
+    nlq.py        natural-language query parsing + live discovery
+    api.py        FastAPI read API; serves frontend/ at /ui and /static
+    cli.py        init-db / ingest / search-openalex / refresh / serve
+    connectors/   github.py, openalex.py, exa.py, base.py (polite HTTP)
+  scripts/        snapshot build, Postgres migration, benchmarks, nightly cron
+  tests/          resolution + ingestion tests (fixture-based, no network)
+
+frontend/
+  index.html      the page shell
+  styles.css      design tokens, layout, motion
+  app.js          hash router, API client, rendering
+  assets/         brand mark
 ```
+
+The two halves talk over HTTP and nothing else: the frontend is plain
+HTML/CSS/JS with no build step, and the backend serves it as static files.
+Editing the interface means editing those three files — no Python involved,
+no bundler, reload the page and it is there.
 
 ## Running the full build
 
@@ -408,7 +422,7 @@ graph you keep writing to while serving:
 ```bash
 export RIP_DATABASE_URL=postgresql+psycopg://user:pass@host/seekr
 .venv/bin/python -m rip.cli init-db
-.venv/bin/python scripts/migrate_to_postgres.py   # copies an existing SQLite graph
+.venv/bin/python backend/scripts/migrate_to_postgres.py   # copies an existing SQLite graph
 ```
 
 No code changes — every query in the codebase runs on both.
@@ -421,10 +435,10 @@ the read API, not the product: the snapshot is capped at 100 MB, which is
 roughly 14,000 people, and nothing found live can be kept.
 
 ```bash
-.venv/bin/python scripts/build_snapshot.py   # never copy rip.db by hand
+.venv/bin/python backend/scripts/build_snapshot.py   # never copy rip.db by hand
 ```
 
-`scripts/build_snapshot.py` is the only supported way to build it. It
+`backend/scripts/build_snapshot.py` is the only supported way to build it. It
 checkpoints the WAL, strips raw payloads and forces `journal_mode=DELETE` —
 a WAL database **cannot be opened on a read-only filesystem**, so a
 hand-copied `rip.db` produces a deployment where every `/v1` route returns
@@ -438,7 +452,7 @@ says plainly that people found live are shown but not saved.
 
 **Never ingest inside the API server process.** The API is read-only and, in
 production, reads a snapshot on a read-only filesystem. Ingestion runs from
-cron (`scripts/nightly_refresh.sh`) or a separate `rip.cli worker` process.
+cron (`backend/scripts/nightly_refresh.sh`) or a separate `rip.cli worker` process.
 On SQLite that separation is what WAL mode makes safe; on Postgres it lets
 you run several workers at once.
 

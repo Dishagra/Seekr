@@ -13,7 +13,13 @@ from sqlalchemy import String as SAString
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from pathlib import Path
+
 from .db import READ_ONLY, SessionLocal, init_db
+
+# Fewer results than this is a thin answer, and thin is worth topping up from
+# live sources even though it is not empty.
+THIN_ANSWER = 10
 from .nlq import _word_match  # whole-word matching, shared with the parser
 from .models import (
     Affiliation,
@@ -105,14 +111,25 @@ def _evidence_dict(e: Evidence) -> dict:
     }
 
 
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+
+if FRONTEND_DIR.is_dir():
+    # styles.css, app.js and the logo, straight off disk: editing the frontend
+    # means editing those files, with no Python involved
+    from starlette.staticfiles import StaticFiles
+
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+
 @app.get("/ui")
 def ui():
-    """Internal exploration UI (token entered in-page)."""
+    """The exploration UI. Its files live in frontend/, not in this package."""
     from starlette.responses import HTMLResponse
 
-    from .ui import UI_HTML
-
-    return HTMLResponse(UI_HTML)
+    index = FRONTEND_DIR / "index.html"
+    if not index.exists():
+        raise HTTPException(500, f"frontend not found at {FRONTEND_DIR}")
+    return HTMLResponse(index.read_text())
 
 
 @app.get("/")
@@ -911,9 +928,14 @@ def nl_query(
             else None
         ),
         "empty_reason": (diagnose_empty(db, parsed) if (not persons and not matched_nothing) else None),
-        # worth going live whenever the corpus could not answer fully: no
-        # results at all, or a constraint we had to drop
-        "discover_available": bool(not persons or parsed.unmatched_terms),
+        # Worth going live whenever the corpus could not answer fully: nothing
+        # found, a constraint we had to drop, or a thin answer. "Nothing found"
+        # alone was the old test, and it quietly stopped firing as the graph
+        # grew — at 50,000 people almost every query returns something, so the
+        # corpus stopped growing from searches exactly when it looked healthy.
+        "discover_available": bool(
+            not persons or parsed.unmatched_terms or len(persons) < THIN_ANSWER
+        ),
         # on the deployed read-only snapshot a live search still answers the
         # question, but nothing it finds can be kept — say so rather than
         # letting the corpus look mysteriously frozen
@@ -924,7 +946,11 @@ def nl_query(
     # when live search is worth doing, and the free sources cost nothing.
     # Metered providers stay opt-in.
     allow_paid = mode in ("true", "queue", "1")
-    if mode in ("true", "queue", "1", "auto") and response["discover_available"]:
+    explicit = mode in ("true", "queue", "1")
+    # An explicit request is a request. discover_available is a hint for the
+    # UI about whether the button is worth pressing, not a veto over someone
+    # who already pressed it.
+    if explicit or (mode == "auto" and response["discover_available"]):
         from .nlq import discovery_suggestions, queue_suggestions
 
         # Live results are persisted when the provider returned a full person

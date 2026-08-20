@@ -1,344 +1,11 @@
-"""Seekr's internal exploration UI, served at /ui.
-
-One self-contained page (hash-routed). Talks to the /v1 API with a bearer
-token the operator pastes once and we keep in localStorage. Exploration,
-review and debugging only — no ranking anywhere.
-"""
-
-UI_HTML = r"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Seekr</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-:root{
-  --bg:#fbfbfd; --surface:#ffffff; --surface2:#f5f6f8; --raised:#ffffff;
-  --ink:#15171c; --ink2:#3d434e; --muted:#6b7280; --faint:#9aa1ad;
-  --line:#e5e7ec; --line2:#eef0f4;
-  --accent:#3b4ce8; --accent-ink:#ffffff; --accent-soft:#eef0fe;
-  --ok:#16794c; --ok-soft:#e7f5ee;
-  --warn:#a65b00; --warn-soft:#fdf1e3;
-  --danger:#c2255c; --danger-soft:#fdecf2;
-  --shadow:0 1px 2px rgba(16,18,24,.04), 0 4px 12px rgba(16,18,24,.05);
-  --radius:8px; --radius-sm:6px;
-  --sans:"Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    --bg:#0b0c0f; --surface:#141619; --surface2:#1b1e23; --raised:#181b1f;
-    --ink:#e9ebef; --ink2:#c3c8d0; --muted:#8b919c; --faint:#6a707b;
-    --line:#252932; --line2:#1f232a;
-    --accent:#7b8bff; --accent-ink:#0b0c0f; --accent-soft:#1a1e33;
-    --ok:#4ade80; --ok-soft:#132318;
-    --warn:#fbbf24; --warn-soft:#251c0d;
-    --danger:#fb7185; --danger-soft:#2a1119;
-    --shadow:0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.28);
-  }
-}
-:root[data-theme="dark"]{
-  --bg:#0b0c0f; --surface:#141619; --surface2:#1b1e23; --raised:#181b1f;
-  --ink:#e9ebef; --ink2:#c3c8d0; --muted:#8b919c; --faint:#6a707b;
-  --line:#252932; --line2:#1f232a;
-  --accent:#7b8bff; --accent-ink:#0b0c0f; --accent-soft:#1a1e33;
-  --ok:#4ade80; --ok-soft:#132318;
-  --warn:#fbbf24; --warn-soft:#251c0d;
-  --danger:#fb7185; --danger-soft:#2a1119;
-  --shadow:0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.28);
-}
-*{box-sizing:border-box; margin:0; padding:0}
-html{-webkit-text-size-adjust:100%}
-body{
-  background:var(--bg); color:var(--ink); font-family:var(--sans);
-  font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
-}
-a{color:var(--accent); text-decoration:none}
-a:hover{text-decoration:underline}
-button{font:inherit; cursor:pointer}
-:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
-@media (prefers-reduced-motion:reduce){ *{animation:none !important; transition:none !important} }
-
-/* ---------- shell ---------- */
-.shell{display:grid; grid-template-columns:236px 1fr; min-height:100vh}
-.rail{
-  border-right:1px solid var(--line); background:var(--surface);
-  display:flex; flex-direction:column; position:sticky; top:0; height:100vh;
-}
-.brand{display:flex; align-items:center; gap:9px; padding:20px 18px 18px}
-.brand .mark{
-  width:26px; height:26px; border-radius:7px; background:var(--ink);
-  display:grid; place-items:center; flex:none;
-}
-.brand .mark svg{stroke:var(--bg)}
-.brand b{font-size:16px; font-weight:600; letter-spacing:-.02em}
-.brand span{font-size:11px; color:var(--faint); display:block; letter-spacing:.02em; margin-top:-2px}
-nav{display:flex; flex-direction:column; gap:1px; padding:6px 10px}
-nav a{
-  display:flex; align-items:center; gap:9px; padding:7px 10px; border-radius:var(--radius-sm);
-  color:var(--ink2); font-size:13.5px; font-weight:500; transition:background .12s, color .12s;
-}
-nav a:hover{background:var(--surface2); text-decoration:none; color:var(--ink)}
-nav a.active{background:var(--accent-soft); color:var(--accent)}
-nav a svg{flex:none; opacity:.85}
-.rail-foot{margin-top:auto; padding:14px 16px; border-top:1px solid var(--line2); font-size:11.5px; color:var(--faint)}
-.rail-foot .stat{display:flex; justify-content:space-between; padding:2px 0; font-variant-numeric:tabular-nums}
-.rail-foot .stat b{color:var(--ink2); font-weight:500}
-.themebtn{
-  margin-top:10px; width:100%; border:1px solid var(--line); background:var(--surface);
-  color:var(--muted); border-radius:var(--radius-sm); padding:5px; font-size:11.5px;
-}
-.themebtn:hover{background:var(--surface2); color:var(--ink)}
-
-main{min-width:0; display:flex; flex-direction:column}
-.topbar{
-  position:sticky; top:0; z-index:20; background:color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter:blur(8px); border-bottom:1px solid var(--line); padding:14px 28px;
-}
-.page{padding:24px 28px 80px; max-width:1180px; width:100%}
-h1.title{font-size:19px; font-weight:600; letter-spacing:-.02em}
-.sub{color:var(--muted); font-size:13px; margin-top:2px}
-
-/* ---------- search ---------- */
-.searchrow{display:flex; gap:8px; align-items:center}
-.searchwrap{position:relative; flex:1}
-.searchwrap svg{position:absolute; left:12px; top:50%; transform:translateY(-50%); stroke:var(--faint)}
-input.search{
-  width:100%; font:inherit; font-size:14px; padding:10px 82px 10px 36px; color:var(--ink);
-  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
-  transition:border-color .12s, box-shadow .12s;
-}
-input.search::placeholder{color:var(--faint)}
-input.search:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
-.kbd{
-  position:absolute; right:10px; top:50%; transform:translateY(-50%);
-  font-family:var(--mono); font-size:10.5px; color:var(--faint);
-  border:1px solid var(--line); border-radius:4px; padding:2px 5px; background:var(--surface2);
-}
-.btn{
-  border:1px solid var(--line); background:var(--surface); color:var(--ink);
-  border-radius:var(--radius-sm); padding:8px 13px; font-size:13px; font-weight:500;
-  transition:background .12s, border-color .12s;
-}
-.btn:hover{background:var(--surface2)}
-.btn.primary{background:var(--ink); color:var(--bg); border-color:var(--ink)}
-.btn.primary:hover{opacity:.88}
-.btn.sm{padding:4px 9px; font-size:12px}
-.btn.danger{color:var(--danger); border-color:color-mix(in srgb, var(--danger) 30%, var(--line))}
-.btn.danger:hover{background:var(--danger-soft)}
-.btn:disabled{opacity:.5; cursor:default}
-.btn-row{display:flex; gap:6px; flex-wrap:wrap}
-
-/* One row, never two: these are a hint, not a menu. Anything past the edge
-   scrolls sideways rather than pushing the results further down the page. */
-.examples{display:flex; gap:6px; flex-wrap:nowrap; margin-top:10px; align-items:center;
-  overflow-x:auto; scrollbar-width:none}
-.examples::-webkit-scrollbar{display:none}
-.examples em{color:var(--faint); font-style:normal; font-size:12px; margin-right:2px; flex:0 0 auto}
-.examples .chipbtn{flex:0 0 auto; max-width:220px; overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap}
-.chipbtn{
-  border:1px solid var(--line); background:var(--surface); color:var(--ink2);
-  border-radius:99px; padding:3px 11px; font-size:12px;
-}
-.chipbtn:hover{border-color:var(--accent); color:var(--accent); background:var(--accent-soft)}
-
-/* ---------- filters ---------- */
-.filters{margin-top:14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface)}
-.filters summary{
-  list-style:none; cursor:pointer; padding:10px 14px; font-size:13px; font-weight:500;
-  display:flex; align-items:center; gap:8px; color:var(--ink2);
-}
-.filters summary::-webkit-details-marker{display:none}
-.filters summary .caret{transition:transform .15s}
-.filters[open] summary .caret{transform:rotate(90deg)}
-.filters summary .count{
-  background:var(--accent); color:var(--accent-ink); border-radius:99px;
-  font-size:10.5px; padding:1px 7px; font-variant-numeric:tabular-nums;
-}
-.fgrid{
-  display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px 14px;
-  padding:4px 14px 14px; border-top:1px solid var(--line2);
-}
-.fgrid label{display:flex; flex-direction:column; gap:4px; font-size:11.5px; color:var(--muted); font-weight:500}
-.fgrid label.chk{flex-direction:row; align-items:center; gap:7px; font-size:13px; color:var(--ink2); padding-top:18px}
-.fgrid input, .fgrid select{
-  font:inherit; font-size:13px; padding:6px 8px; color:var(--ink);
-  background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-sm);
-}
-.fgrid input:focus, .fgrid select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
-.whylist{list-style:none; margin:12px 0 0; padding:0; display:flex; gap:6px;
-  flex-wrap:wrap; justify-content:center; font-size:12px; color:var(--muted)}
-.whylist li{border:1px solid var(--line); border-radius:6px; padding:3px 8px}
-.whylist code{font-size:11px; color:var(--ink2)}
-.fhint{grid-column:1/-1; margin:2px 0 0; font-size:12px; color:var(--faint)}
-.fhint code{background:var(--surface); border:1px solid var(--line); border-radius:4px;
-  padding:0 4px; font-size:11px}
-.filter-actions{display:flex; gap:8px; padding:0 14px 14px}
-
-/* ---------- results ---------- */
-.meta{display:flex; align-items:center; justify-content:space-between; gap:12px; margin:20px 0 10px; flex-wrap:wrap}
-.count{font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums}
-.count b{color:var(--ink); font-weight:600}
-.pills{display:flex; gap:5px; flex-wrap:wrap}
-.pill{
-  display:inline-flex; align-items:center; gap:5px; font-size:11.5px; padding:2px 9px;
-  border-radius:99px; background:var(--surface2); color:var(--ink2); border:1px solid var(--line2);
-}
-.pill b{color:var(--muted); font-weight:500; font-size:10px; text-transform:uppercase; letter-spacing:.04em}
-.pill.warn{background:var(--warn-soft); color:var(--warn); border-color:transparent}
-
-.card{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden}
-.tablewrap{overflow-x:auto}
-table.list{width:100%; border-collapse:collapse; font-size:13.5px}
-table.list thead th{
-  text-align:left; font-size:11px; font-weight:600; color:var(--muted); letter-spacing:.03em;
-  text-transform:uppercase; padding:9px 16px; background:var(--surface2);
-  border-bottom:1px solid var(--line); position:sticky; top:0; white-space:nowrap;
-}
-table.list td{padding:11px 16px; border-top:1px solid var(--line2); vertical-align:top}
-table.list tbody tr{cursor:pointer; transition:background .1s}
-table.list tbody tr:hover{background:var(--surface2)}
-table.list tbody tr:first-child td{border-top:none}
-td.nm{font-weight:600; color:var(--ink); white-space:nowrap}
-td.nm .id{display:block; font-family:var(--mono); font-size:10.5px; color:var(--faint); font-weight:400; margin-top:1px}
-td.org{color:var(--ink2)}
-td.org .sub2{font-size:11.5px; color:var(--faint); margin-top:2px}
-td.sk{color:var(--muted); font-size:12.5px; max-width:340px}
-td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
-.vote{white-space:nowrap}
-.vbtn{background:none;border:1px solid var(--line);border-radius:6px;padding:2px 6px;
-  margin-right:4px;cursor:pointer;color:var(--muted);line-height:1}
-.vbtn:hover{border-color:var(--fg);color:var(--fg)}
-.vbtn.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
-.vbtn.save.on{background:#0a66c2;border-color:#0a66c2;color:#fff}
-.chipbtn.muted{color:var(--faint);border-style:dashed}
-/* Named plink, not brand: .brand is already the sidebar logo block. */
-.plinks{display:flex; gap:4px; margin-top:5px; flex-wrap:wrap}
-.plink{display:inline-flex; align-items:center; justify-content:center;
-  box-sizing:border-box; width:18px; height:18px; min-width:18px; flex:0 0 auto;
-  border-radius:5px; text-decoration:none; padding:0;
-  color:#fff; background:var(--plink); opacity:.92;
-  transition:opacity .12s ease, transform .12s ease}
-.plink svg{fill:currentColor; stroke:none; display:block}
-.plink:hover{opacity:1; transform:translateY(-1px)}
-.livetag{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:999px;
-  font-size:10px;font-weight:600;letter-spacing:.02em;vertical-align:middle;
-  background:var(--accent-soft,#e8f0fe);color:var(--accent,#1a56db)}
-.srcpill{
-  display:inline-block; font-family:var(--mono); font-size:10px; padding:1px 6px; margin:1px 3px 1px 0;
-  border-radius:4px; background:var(--surface2); color:var(--muted); border:1px solid var(--line2);
-}
-.muted{color:var(--faint)}
-.loadmore{padding:12px; text-align:center; border-top:1px solid var(--line2)}
-
-/* ---------- states ---------- */
-.empty{padding:56px 24px; text-align:center}
-.empty .icon{width:38px; height:38px; margin:0 auto 12px; display:grid; place-items:center;
-  border-radius:10px; background:var(--surface2); color:var(--faint)}
-.empty h3{font-size:15px; font-weight:600; margin-bottom:4px}
-.empty p{color:var(--muted); font-size:13px; max-width:420px; margin:0 auto 14px}
-.loading{padding:44px; text-align:center; color:var(--muted); font-size:13px}
-.spinner{
-  width:18px; height:18px; border:2px solid var(--line); border-top-color:var(--accent);
-  border-radius:50%; animation:spin .7s linear infinite; margin:0 auto 10px;
-}
-@keyframes spin{to{transform:rotate(360deg)}}
-.banner{
-  padding:10px 14px; border-radius:var(--radius-sm); font-size:13px; margin-bottom:14px;
-  background:var(--danger-soft); color:var(--danger); border:1px solid transparent;
-}
-.banner.info{background:var(--accent-soft); color:var(--accent)}
-.banner.warnbar{background:var(--warn-soft); color:var(--warn); display:flex; align-items:center; gap:6px; flex-wrap:wrap}
-.banner.warnbar b{font-weight:600}
-
-/* ---------- person ---------- */
-.phead{display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:6px}
-.phead h1{font-size:26px; font-weight:600; letter-spacing:-.025em; line-height:1.2}
-.phead .role{color:var(--muted); font-size:14px; margin-top:3px}
-.badges{display:flex; gap:6px; flex-wrap:wrap; margin-top:8px}
-.badge{
-  font-size:11px; font-weight:500; padding:2px 9px; border-radius:99px;
-  background:var(--surface2); color:var(--ink2); border:1px solid var(--line2);
-}
-.badge.ok{background:var(--ok-soft); color:var(--ok); border-color:transparent}
-.badge.warn{background:var(--warn-soft); color:var(--warn); border-color:transparent}
-.idline{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:8px}
-.idline.aka{font-family:var(--sans); font-size:12px; max-width:720px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.grid2{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; align-items:start}
-section.block{margin-top:20px}
-section.block > h2{
-  font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.05em;
-  color:var(--muted); margin-bottom:9px; display:flex; align-items:center; gap:7px;
-}
-section.block > h2 .n{background:var(--surface2); border-radius:99px; padding:0 7px; font-size:10.5px; color:var(--faint)}
-.card .inner{padding:14px 16px}
-table.data{width:100%; border-collapse:collapse; font-size:13px}
-table.data th{
-  text-align:left; font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
-  color:var(--faint); padding:0 12px 7px 0;
-}
-table.data td{padding:7px 12px 7px 0; border-top:1px solid var(--line2); vertical-align:top}
-table.data tr:first-child td{border-top:none}
-table.data td.num{text-align:right; padding-right:0; font-variant-numeric:tabular-nums}
-.vstate{font-size:10px; padding:1px 7px; border-radius:99px; font-weight:500}
-.vstate.corroborated{background:var(--ok-soft); color:var(--ok)}
-.vstate.unverified{background:var(--surface2); color:var(--faint)}
-.conflict{border:1px solid var(--line); border-left:3px solid var(--warn); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:8px; background:var(--surface)}
-.conflict .ct{font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--warn); font-weight:600; margin-bottom:7px}
-.vs{display:grid; grid-template-columns:1fr auto 1fr; gap:12px; align-items:center}
-.vs .side b{display:block; font-size:13.5px; font-weight:600}
-.vs .side span{font-size:11.5px; color:var(--faint)}
-.vs .mid{color:var(--faint); font-size:11px}
-
-/* ---------- network ---------- */
-.net{border-radius:var(--radius); overflow:hidden; background:var(--surface2); position:relative}
-.net svg{display:block; width:100%; height:auto}
-.net text{font-family:var(--sans); font-size:9.5px; fill:var(--ink2); pointer-events:none}
-.net .edge{stroke:var(--line); stroke-width:1.2}
-.net .edge.org{stroke:var(--accent); stroke-dasharray:3 3; opacity:.5}
-.net .n-person{fill:var(--surface); stroke:var(--muted); stroke-width:1.4; cursor:pointer; transition:fill .12s}
-.net .n-person:hover{fill:var(--accent); stroke:var(--accent)}
-.net .n-self{fill:var(--ink); stroke:var(--ink)}
-.net .n-org{fill:var(--accent); stroke:none; opacity:.8}
-.legend{position:absolute; bottom:8px; right:12px; font-size:10.5px; color:var(--faint)}
-
-/* ---------- gate ---------- */
-.gate{min-height:100vh; display:grid; place-items:center; padding:24px}
-.gatebox{width:100%; max-width:380px; background:var(--surface); border:1px solid var(--line);
-  border-radius:12px; box-shadow:var(--shadow); padding:28px}
-.gatebox .mark{width:34px; height:34px; border-radius:9px; background:var(--ink); display:grid; place-items:center; margin-bottom:14px}
-.gatebox .mark svg{stroke:var(--bg)}
-.gatebox h1{font-size:18px; font-weight:600; margin-bottom:4px}
-.gatebox p{color:var(--muted); font-size:13px; margin-bottom:16px}
-.gatebox input{width:100%; font:inherit; padding:9px 11px; border:1px solid var(--line);
-  border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); margin-bottom:10px}
-.gatebox input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
-.gatebox .btn{width:100%; justify-content:center}
-
-@media (max-width:860px){
-  .shell{grid-template-columns:1fr}
-  .rail{position:static; height:auto; flex-direction:row; align-items:center; overflow-x:auto; border-right:none; border-bottom:1px solid var(--line)}
-  .brand{padding:12px 16px}
-  nav{flex-direction:row; padding:8px}
-  .rail-foot{display:none}
-  .page, .topbar{padding-left:16px; padding-right:16px}
-}
-</style>
-</head>
-<body>
-<div id="root"></div>
-
-<script>
 const $ = (s, r=document)=>r.querySelector(s);
 const esc = (s)=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = (n)=>(n??0).toLocaleString();
 
 const ICON = {
-  logo:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>',
+  // Deccan AI's mark: one continuous hand-drawn loop. Inline rather than an
+  // <img> so it takes the surrounding colour in either theme.
+  logo:'<svg width="16" height="16" viewBox="0 0 512 512" fill="none" aria-hidden="true"><path d="M241 44c58 2 108 34 141 78 24 32 34 66 20 104-11 30-34 54-56 79-27 30-45 62-56 101-11 38-36 62-70 61-33-1-56-27-66-64-9-33-13-68-14-104-1-40-3-80 5-118C155 129 187 78 241 44Z" stroke="currentColor" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   search:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16 16l5 5"/></svg>',
   people:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="3.2"/><path d="M22 20v-2a4 4 0 0 0-3-3.87"/></svg>',
   review:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>',
@@ -390,7 +57,7 @@ function shell(active, topbar, body){
     <aside class="rail">
       <div class="brand">
         <div class="mark">${ICON.logo}</div>
-        <div><b>Seekr</b><span>people graph</span></div>
+        <div><b>Seekr</b><span>by Deccan<sup>AI</sup></span></div>
       </div>
       <nav>${NAV.map(([href,label,icon])=>
         `<a href="${href}" class="${active===href?"active":""}">${icon}${label}</a>`).join("")}</nav>
@@ -656,7 +323,9 @@ function clearFilters(){
   $("#results").innerHTML = "";
 }
 
-function busy(msg){ $("#results").innerHTML = `<div class="loading"><div class="spinner"></div>${esc(msg)}</div>`; }
+// Waiting is drawn with the brand mark rather than a generic spinner.
+const MARK_LOADER = '<svg class="markload" viewBox="0 0 512 512" fill="none" aria-hidden="true"><path d="M241 44c58 2 108 34 141 78 24 32 34 66 20 104-11 30-34 54-56 79-27 30-45 62-56 101-11 38-36 62-70 61-33-1-56-27-66-64-9-33-13-68-14-104-1-40-3-80 5-118C155 129 187 78 241 44Z" stroke="currentColor" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function busy(msg){ $("#results").innerHTML = `<div class="loading">${MARK_LOADER}${esc(msg)}</div>`; }
 
 async function runQuery(discover, offset){
   const q = $("#q").value.trim(); if(!q) return;
@@ -856,7 +525,7 @@ async function saveTo(personId, btn){
 }
 
 async function renderShortlists(){
-  shell("#/shortlists", null, `<div class="loading"><div class="spinner"></div>Loading shortlists…</div>`);
+  shell("#/shortlists", null, `<div class="loading">${MARK_LOADER}Loading shortlists…</div>`);
   let data;
   try{ data = await api("/v1/shortlists"); }
   catch(e){ $("#results") && ($("#results").innerHTML = esc(e.message)); return; }
@@ -899,7 +568,7 @@ async function queueOne(source, externalId, btn){
 /* ---------------- person ---------------- */
 async function renderPerson(id){
   shell(null, `<a class="btn sm" href="#/search">${ICON.back} Back to results</a>`,
-    `<div class="loading"><div class="spinner"></div>Loading profile…</div>`);
+    `<div class="loading">${MARK_LOADER}Loading profile…</div>`);
   let p, ev, pubs, projs, orgs, prov, conf, graph, docs;
   try{
     [p, ev, pubs, projs, orgs, prov, conf, graph, docs] = await Promise.all([
@@ -1075,7 +744,7 @@ function drawNetwork(graph, selfId){
 async function renderReview(){
   shell("#/review", `<h1 class="title">Review queue</h1>
     <div class="sub">Merges Seekr was not confident enough to make on its own. Every decision is reversible.</div>`,
-    `<div class="loading"><div class="spinner"></div>Loading queue…</div>`);
+    `<div class="loading">${MARK_LOADER}Loading queue…</div>`);
   let r;
   try{ r = await api("/v1/review/merges"); }
   catch(e){ if(e.message!=="unauthorized") $("#page").innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
@@ -1175,7 +844,3 @@ async function route(){
 }
 window.addEventListener("hashchange", route);
 route();
-</script>
-</body>
-</html>
-"""

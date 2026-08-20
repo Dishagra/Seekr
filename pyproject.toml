@@ -22,3 +22,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["rip", "rip.connectors"]
+package-dir = {"" = "backend"}
+
+[tool.pytest.ini_options]
+# the package lives under backend/, so tests import it from there
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
