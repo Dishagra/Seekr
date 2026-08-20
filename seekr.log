@@ -1,26 +1,30 @@
-INFO:     Started server process [30494]
+INFO:     Started server process [31413]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 Seekr on http://127.0.0.1:8000/ui
   database  sqlite:///rip.db
   auth      bearer token required
-INFO:     127.0.0.1:49158 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49159 - "GET /v1/query?q=zzz+nonexistent+person+xyzzy HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49164 - "GET /ui HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49164 - "GET /static/styles.css HTTP/1.1" 304 Not Modified
-INFO:     127.0.0.1:49165 - "GET /static/app.js HTTP/1.1" 304 Not Modified
-INFO:     127.0.0.1:49169 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:49167 - "GET /v1/facets?field=role&limit=8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49165 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49164 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49166 - "GET /v1/facets?field=country&limit=100 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49166 - "GET /v1/facets?field=source&limit=100 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49166 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49166 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49166 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49166 - "GET /v1/facets?field=role&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49166 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49166 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49168 - "GET /v1/query?q=zzz%20nonexistent%20person%20xyzzy HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49168 - "GET /v1/persons?country=DE&skill=go&limit=50 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49278 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /ui HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /static/styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49286 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49290 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49288 - "GET /v1/facets?field=role&limit=8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49286 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49287 - "GET /v1/facets?field=country&limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /v1/facets?field=source&limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /v1/facets?field=role&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49285 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
+could not fetch github result: source returned a profile with no name
+INFO:     127.0.0.1:49289 - "GET /v1/query?q=quantum%20error%20correction%20researchers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49289 - "GET /v1/query?q=python%20developers%20in%20bangalore HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49315 - "GET /static/assets/mark.svg HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49316 - "GET /ui HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49317 - "GET /static/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49318 - "GET /static/styles.css HTTP/1.1" 200 OK

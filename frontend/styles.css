@@ -74,7 +74,8 @@ button{font:inherit; cursor:pointer}
    attribute on the child wins over a stroke inherited from the parent svg —
    which left the mark drawn black on a black tile. */
 .brand .mark{color:var(--bg)}
-.brand .mark svg path{stroke:currentColor; stroke-width:34}
+/* padding so the loop breathes inside its tile rather than touching the edges */
+.brand .mark svg{width:15px; height:15px}
 .brand b{font-size:16px; font-weight:600; letter-spacing:-.02em}
 .brand span{font-size:11px; color:var(--faint); display:block; letter-spacing:.02em; margin-top:-2px}
 nav{display:flex; flex-direction:column; gap:1px; padding:6px 10px}
@@ -101,10 +102,12 @@ main{min-width:0; display:flex; flex-direction:column; position:relative; overfl
    screens where it would crowd the content instead of framing it. */
 .backdrop{
   /* Fixed, not absolute: anchored to the bottom of a tall page it sits below
-     the fold and is never seen. */
-  position:fixed; right:-200px; bottom:-250px; z-index:0;
-  color:var(--ink); opacity:.055; pointer-events:none; user-select:none;
-  transform:rotate(-8deg);
+     the fold and is never seen. Whole, not bled off the edge — a cropped logo
+     reads as a mistake. And far fainter than a stroked mark would need: a
+     filled shape carries much more ink for the same opacity. */
+  position:fixed; right:36px; bottom:28px; z-index:0;
+  color:var(--ink); opacity:.028; pointer-events:none; user-select:none;
+  transform:rotate(-6deg);
 }
 .backdrop svg{display:block}
 @media (max-width:900px){ .backdrop{display:none} }
@@ -279,22 +282,22 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
 .empty h3{font-size:15px; font-weight:600; margin-bottom:4px}
 .empty p{color:var(--muted); font-size:13px; max-width:420px; margin:0 auto 14px}
 .loading{padding:44px; text-align:center; color:var(--muted); font-size:13px}
-/* The brand mark draws itself while a search runs. It is the one organic
-   curve in an otherwise precise interface, so the waiting moment is the
-   moment the product signs its name. */
+/* The mark fills from the bottom while a search runs. A filled outline
+   cannot be "drawn" with a dash offset the way a stroked path can, and the
+   real logo has hand-drawn weight variation that a uniform stroke loses —
+   so the shape stays exact and the fill carries the motion instead. */
 .markload{width:34px; height:34px; color:var(--ink); display:block; margin:0 auto 14px}
-.markload path{
-  /* 1250 is the measured length of the mark path, rounded up. Tuned to the
-     old shape it under-drew and the loop never closed. */
-  stroke-dasharray:1250; stroke-dashoffset:1250;
-  animation:draw 1.9s var(--ease) infinite;
+.markload rect{
+  transform-origin:50% 100%;
+  animation:markfill 1.7s var(--ease) infinite;
 }
-@keyframes draw{
-  0%{stroke-dashoffset:1250; opacity:.25}
-  45%{stroke-dashoffset:0; opacity:1}
-  72%{stroke-dashoffset:0; opacity:1}
-  100%{stroke-dashoffset:-1250; opacity:.25}
+@keyframes markfill{
+  0%{transform:scaleY(0)}
+  55%{transform:scaleY(1)}
+  75%{transform:scaleY(1)}
+  100%{transform:scaleY(0)}
 }
+
 .spinner{
   width:18px; height:18px; border:2px solid var(--line); border-top-color:var(--accent);
   border-radius:50%; animation:spin .7s linear infinite; margin:0 auto 10px;
@@ -365,7 +368,6 @@ table.data td.num{text-align:right; padding-right:0; font-variant-numeric:tabula
   border-radius:12px; box-shadow:var(--shadow); padding:28px}
 .gatebox .mark{width:34px; height:34px; border-radius:9px; background:var(--ink); display:grid; place-items:center; margin-bottom:14px}
 .gatebox .mark{color:var(--bg)}
-.gatebox .mark svg path{stroke:currentColor; stroke-width:34}
 .gatebox h1{font-size:18px; font-weight:600; margin-bottom:4px}
 .gatebox p{color:var(--muted); font-size:13px; margin-bottom:16px}
 .secretfield{position:relative; display:block}

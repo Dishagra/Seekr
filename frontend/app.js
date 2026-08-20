@@ -2,14 +2,15 @@ const $ = (s, r=document)=>r.querySelector(s);
 const esc = (s)=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = (n)=>(n??0).toLocaleString();
 
-/* The Deccan mark, defined once. A continuous loop whose right side tucks
-   inward before running down to a tip left of centre — that tuck is what
-   makes it recognisable, and the egg shape I had first is not it. */
-const MARK_PATH = "M246 56C322 58 388 108 404 174C418 236 360 300 316 352C286 388 252 436 230 480C212 516 168 520 145 489C110 444 78 372 68 292C58 210 68 132 114 94C152 62 192 54 246 56Z";
+/* The Deccan mark: the company's logo, traced from the official artwork
+   rather than drawn by eye. It is a filled outline — the inner counter is a
+   second subpath under fill-rule evenodd — which keeps the hand-drawn
+   variation in stroke weight that a uniform stroke cannot reproduce.
+   The viewBox has padding built in, so nothing clips at any size. */
+const MARK_PATH = "M250.9 16.0L275.4 17.0L304.1 23.2L328.7 32.4L348.1 42.6L362.4 51.8L381.9 67.2L400.3 85.6L416.7 105.0L431.0 126.5L436.1 138.8L438.2 149.0L437.2 179.8L433.1 192.0L418.7 219.7L406.4 239.1L391.1 259.6L325.6 335.3L312.3 354.8L291.8 394.7L271.4 447.9L264.2 462.2L256.0 474.5L245.8 484.7L231.4 492.9L219.2 496.0L199.7 496.0L184.4 491.9L167.0 483.7L148.5 469.4L134.2 453.0L119.9 431.5L108.6 409.0L93.3 368.1L93.3 364.0L91.2 359.9L86.1 334.3L84.1 329.2L81.0 304.6L78.9 297.4L75.9 260.6L74.8 259.6L74.8 236.0L73.8 235.0L74.8 199.2L75.9 198.2L77.9 179.8L84.1 160.3L93.3 146.0L105.6 132.7L140.3 104.0L159.8 84.6L186.4 50.8L202.8 34.4L213.0 27.3L225.3 21.1L241.7 17.0L249.9 17.0ZM157.7 127.6L178.2 108.1L208.9 69.2L221.2 56.9L227.3 52.8L241.7 46.7L270.3 45.7L290.8 49.8L311.3 56.9L338.9 71.3L350.2 79.5L362.4 89.7L390.1 119.4L402.4 135.7L408.5 150.1L409.5 162.4L407.5 171.6L404.4 180.8L393.1 203.3L369.6 239.1L353.2 259.6L351.2 260.6L308.2 310.8L287.7 339.4L271.4 369.1L271.4 371.1L260.1 394.7L244.7 435.6L237.6 451.0L231.4 460.2L226.3 465.3L219.2 469.4L214.0 470.4L198.7 469.4L180.3 460.2L167.0 447.9L152.6 429.5L139.3 405.9L132.2 386.5L130.1 384.4L130.1 381.4L124.0 366.0L113.7 328.2L113.7 322.0L108.6 297.4L108.6 290.3L107.6 289.3L107.6 282.1L105.6 272.9L105.6 261.6L104.5 260.6L103.5 211.5L104.5 210.5L105.6 190.0L108.6 178.7L116.8 164.4L127.0 153.1L156.7 128.6Z";
 const markSvg = (cls, size) =>
-  `<svg class="${cls}" width="${size}" height="${size}" viewBox="0 0 460 560" fill="none" aria-hidden="true">`
-  + `<path d="${MARK_PATH}" stroke="currentColor" stroke-width="38"`
-  + ` stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  `<svg class="${cls}" width="${size}" height="${size}" viewBox="0 0 512 512" aria-hidden="true">`
+  + `<path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd"/></svg>`;
 
 const ICON = {
   logo: markSvg('', 15),
@@ -95,7 +96,7 @@ function shell(active, topbar, body){
       </div>
     </aside>
     <main>
-      ${active==="#/search" ? `<div class="backdrop" aria-hidden="true">${markSvg("", 720)}</div>` : ""}
+      ${active==="#/search" ? `<div class="backdrop" aria-hidden="true">${markSvg("", 460)}</div>` : ""}
       <div class="topbar">${topbar}</div>
       <div class="page" id="page">${body}</div>
     </main>
@@ -353,7 +354,14 @@ function clearFilters(){
 }
 
 // Waiting is drawn with the brand mark rather than a generic spinner.
-const MARK_LOADER = markSvg('markload', 34);
+const MARK_LOADER = `
+  <svg class="markload" width="34" height="34" viewBox="0 0 512 512" aria-hidden="true">
+    <defs><clipPath id="mkfill"><rect x="0" y="0" width="512" height="512"/></clipPath></defs>
+    <path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd" opacity=".18"/>
+    <g clip-path="url(#mkfill)">
+      <path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd"/>
+    </g>
+  </svg>`;
 function busy(msg){ $("#results").innerHTML = `<div class="loading">${MARK_LOADER}${esc(msg)}</div>`; }
 
 async function runQuery(discover, offset){
