@@ -96,7 +96,7 @@ function shell(active, topbar, body){
       </div>
     </aside>
     <main>
-      <div class="backdrop" aria-hidden="true">${markSvg("", 620)}</div>
+      <div class="backdrop" aria-hidden="true">${markBackdrop()}</div>
       <div class="topbar">${topbar}</div>
       <div class="page" id="page">${body}</div>
     </main>
@@ -384,15 +384,27 @@ function clearFilters(){
 }
 
 // Waiting is drawn with the brand mark rather than a generic spinner.
-const MARK_LOADER = `
-  <svg class="markload" width="72" height="72" viewBox="0 0 512 512" aria-hidden="true">
-    <defs><clipPath id="mkfill"><rect x="0" y="0" width="512" height="512"/></clipPath></defs>
-    <path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd" opacity=".18"/>
-    <g clip-path="url(#mkfill)">
+/* The watermark IS the loading indicator. One mark on the page rather than a
+   second, smaller copy appearing next to it while the first sits there
+   inert. The fill layer is invisible until work is in flight. */
+function markBackdrop(){
+  return `
+  <svg width="465" height="465" viewBox="0 0 512 512" aria-hidden="true">
+    <defs><clipPath id="bdfill"><rect class="bdrect" x="0" y="0" width="512" height="512"/></clipPath></defs>
+    <path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd"/>
+    <g class="bdfill" clip-path="url(#bdfill)">
       <path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd"/>
     </g>
   </svg>`;
-function busy(msg){ $("#results").innerHTML = `<div class="loading">${MARK_LOADER}${esc(msg)}</div>`; }
+}
+
+/* Marks the whole page as working, so the watermark animates and any caller
+   can show its own message underneath. */
+function setWorking(on){ document.body.classList.toggle("is-working", !!on); }
+function busy(msg){
+  setWorking(true);
+  $("#results").innerHTML = `<div class="loading">${esc(msg)}</div>`;
+}
 
 async function runQuery(discover, offset){
   const q = $("#q").value.trim(); if(!q) return;
@@ -428,6 +440,7 @@ function loadMore(){
 }
 
 function renderResults(data, opts={}){
+  setWorking(false);
   const f = data.applied_filters;
   const pills = f ? [
     ...(f.skills||[]).map(s=>`<span class="pill"><b>skill</b>${esc(s)}</span>`),
@@ -592,7 +605,7 @@ async function saveTo(personId, btn){
 }
 
 async function renderShortlists(){
-  shell("#/shortlists", null, `<div class="loading">${MARK_LOADER}Loading shortlists…</div>`);
+  shell("#/shortlists", null, (setWorking(true), `<div class="loading">Loading shortlists…</div>`));
   let data;
   try{ data = await api("/v1/shortlists"); }
   catch(e){ $("#results") && ($("#results").innerHTML = esc(e.message)); return; }
@@ -635,7 +648,7 @@ async function queueOne(source, externalId, btn){
 /* ---------------- person ---------------- */
 async function renderPerson(id){
   shell(null, `<a class="btn sm" href="#/search">${ICON.back} Back to results</a>`,
-    `<div class="loading">${MARK_LOADER}Loading profile…</div>`);
+    (setWorking(true), `<div class="loading">Loading profile…</div>`));
   let p, ev, pubs, projs, orgs, prov, conf, graph, docs;
   try{
     [p, ev, pubs, projs, orgs, prov, conf, graph, docs] = await Promise.all([
@@ -811,7 +824,7 @@ function drawNetwork(graph, selfId){
 async function renderReview(){
   shell("#/review", `<h1 class="title">Review queue</h1>
     <div class="sub">Merges Seekr was not confident enough to make on its own. Every decision is reversible.</div>`,
-    `<div class="loading">${MARK_LOADER}Loading queue…</div>`);
+    (setWorking(true), `<div class="loading">Loading queue…</div>`));
   let r;
   try{ r = await api("/v1/review/merges"); }
   catch(e){ if(e.message!=="unauthorized") $("#page").innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
@@ -907,6 +920,9 @@ async function route(){
       const page = $("#page");
       if(page) page.innerHTML = `<div class="banner">${esc(e.message)}</div>`;
     }
+  }finally{
+    // whatever happened, the page is no longer waiting on it
+    setWorking(false);
   }
 }
 window.addEventListener("hashchange", route);

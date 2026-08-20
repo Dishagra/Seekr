@@ -1,57 +1,57 @@
-INFO:     Started server process [33953]
+INFO:     Started server process [34593]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 Seekr on http://127.0.0.1:8000/ui
   database  sqlite:///rip.db
   auth      bearer token required
-INFO:     127.0.0.1:49686 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /ui HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /static/styles.css HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49690 - "GET /static/app.js HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49694 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:49692 - "GET /v1/facets?field=role&limit=8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49690 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49691 - "GET /v1/facets?field=country&limit=100 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /v1/facets?field=source&limit=100 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /v1/facets?field=role&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49693 - "GET /v1/query?q=python%20developers%20in%20bangalore HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49689 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49697 - "GET /v1/query?q=quantum%20error%20correction%20researchers HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:49703 - "GET /v1/shortlists HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/shortlists/3 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49703 - "GET /v1/shortlists/1 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49704 - "GET /v1/shortlists/2 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49700 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49704 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49702 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49704 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49704 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:49700 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49702 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49703 - "GET /v1/review/merges HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49703 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:49701 - "GET /v1/webhooks/health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49704 - "GET /v1/health/sources HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49700 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49702 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49700 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49702 - "GET /favicon.ico HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:49707 - "GET /v1/facets?field=role&limit=8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49700 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49704 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/facets?field=country&limit=100 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/facets?field=source&limit=100 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/facets?field=role&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49701 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49708 - "GET /v1/query?q=quantum%20error%20correction%20researchers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49772 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49774 - "GET /ui HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49774 - "GET /static/styles.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49775 - "GET /static/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:49779 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49777 - "GET /v1/facets?field=role&limit=8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49774 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49775 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /v1/facets?field=country&limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /v1/facets?field=source&limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /v1/facets?field=role&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49776 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49778 - "GET /v1/query?q=topological%20quantum%20computing%20researchers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49805 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49808 - "GET /v1/shortlists HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49805 - "GET /v1/shortlists/3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49807 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49808 - "GET /v1/shortlists/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49809 - "GET /v1/shortlists/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49809 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49806 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49809 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/query?q=superconducting%20qubit%20fabrication%20researchers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49809 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49806 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49808 - "GET /v1/review/merges HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49808 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49807 - "GET /v1/webhooks/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49809 - "GET /v1/health/sources HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49809 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49806 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49809 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49808 - "GET /v1/facets?field=role&limit=8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49806 - "GET /v1/facets?field=source HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49807 - "GET /v1/facets?field=country&limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=country&limit=200 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=source&limit=100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=organization&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=role&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49791 - "GET /v1/facets?field=skill&limit=150 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49812 - "GET /v1/query?q=superconducting%20qubit%20fabrication%20researchers HTTP/1.1" 200 OK

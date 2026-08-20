@@ -113,6 +113,7 @@ main{min-width:0; display:flex; flex-direction:column; position:relative; overfl
      lets it darken whatever it crosses by a hair instead — paper showing
      through the page rather than a shape hidden under it. */
   z-index:5; mix-blend-mode:multiply; opacity:.032;
+  transition:opacity var(--settle) var(--ease);
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]) .backdrop{mix-blend-mode:screen; opacity:.05}
@@ -291,20 +292,31 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
   border-radius:10px; background:var(--surface2); color:var(--faint)}
 .empty h3{font-size:15px; font-weight:600; margin-bottom:4px}
 .empty p{color:var(--muted); font-size:13px; max-width:420px; margin:0 auto 14px}
-.loading{padding:44px; text-align:center; color:var(--muted); font-size:13px}
-/* The mark fills from the bottom while a search runs. A filled outline
-   cannot be "drawn" with a dash offset the way a stroked path can, and the
-   real logo has hand-drawn weight variation that a uniform stroke loses —
-   so the shape stays exact and the fill carries the motion instead. */
-.markload{width:72px; height:72px; color:var(--ink); display:block; margin:0 auto 18px}
-.markload rect{
-  transform-origin:50% 100%;
-  animation:markfill 1.7s var(--ease) infinite;
+/* The label sits with the mark rather than at the top of an empty panel:
+   the watermark is centred in the viewport, so the caption is placed to land
+   just below it. */
+.loading{
+  min-height:58vh; display:grid; place-items:center; align-content:center;
+  padding:44px; text-align:center; color:var(--muted); font-size:13px;
+  letter-spacing:.01em;
 }
+.loading::after{
+  content:""; display:block; width:120px; height:1px; margin-top:14px;
+  background:linear-gradient(90deg, transparent, var(--line), transparent);
+}
+/* The watermark carries the loading state. A filled outline cannot be
+   "drawn" with a dash offset the way a stroked path can, so the mark fills
+   from the bottom instead — the shape stays exactly the official one and the
+   fill does the moving. */
+.bdfill{opacity:0; transition:opacity var(--settle) var(--ease)}
+.bdrect{transform-origin:50% 100%; transform:scaleY(0)}
+body.is-working .backdrop{opacity:.11}
+body.is-working .bdfill{opacity:1}
+body.is-working .bdrect{animation:markfill 1.7s var(--ease) infinite}
 @keyframes markfill{
   0%{transform:scaleY(0)}
   55%{transform:scaleY(1)}
-  75%{transform:scaleY(1)}
+  78%{transform:scaleY(1)}
   100%{transform:scaleY(0)}
 }
 
