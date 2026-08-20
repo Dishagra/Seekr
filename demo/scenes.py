@@ -77,14 +77,14 @@ def caption_typed(c: Chrome, kicker: str, title: str, sub: str = "",
 def caption_corrected(c: Chrome, kicker: str, wrong: str, right: str, sub: str = ""):
     """A caption that fixes its own spelling — used for the correction feature."""
     caption(c, kicker, wrong, sub)
-    record(c, 1.3)
+    record(c, 0.8)
     c.js("""(function(){
       const t=document.querySelector('#demo-cap .t');
       t.innerHTML=`<s style="opacity:.45;text-decoration-thickness:1px">%s</s>`;
       setTimeout(()=>{ t.innerHTML=`<s style="opacity:.35;text-decoration-thickness:1px">%s</s>`
         + ` <span style="color:#8FB0FF">%s</span>`; }, 380);
     })()""" % (wrong, wrong, right))
-    record(c, 2.6)
+    record(c, 1.5)
 
 
 def caption_counted(c: Chrome, kicker: str, template: str, to: int, sub: str = ""):
@@ -99,7 +99,7 @@ def caption_counted(c: Chrome, kicker: str, template: str, to: int, sub: str = "
         if(p<1) requestAnimationFrame(step);
       })(started);
     })()""" % (to, template))
-    record(c, 2.8)
+    record(c, 1.6)
 
 
 def caption(c: Chrome, kicker: str, title: str, sub: str = ""):
@@ -119,7 +119,7 @@ def caption_off(c: Chrome):
     c.js("(document.getElementById('demo-cap')||{classList:{remove(){}}}).classList.remove('on')")
 
 
-def type_query(c: Chrome, text: str, per_char: float = 0.045):
+def type_query(c: Chrome, text: str, per_char: float = 0.026):
     """Type into the search box a character at a time, recording as we go."""
     c.js('document.querySelector("#q").focus(); document.querySelector("#q").value=""')
     for i in range(1, len(text) + 1):

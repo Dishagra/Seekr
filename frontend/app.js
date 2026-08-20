@@ -556,7 +556,7 @@ function renderResults(data, opts={}){
 
   $("#results").innerHTML = `
     <div class="meta">
-      <div class="count">${PAGE.rows.length?`<b>${fmt(PAGE.rows.length)}</b> of ${fmt(total)} matching`:""}</div>
+      <div class="count">${PAGE.rows.length?`<b>${fmt(PAGE.rows.length)}</b> of ${fmt(Math.max(total, PAGE.rows.length))} matching`:""}</div>
       <div class="pills">${pills}${unmatched}</div>
     </div>
     ${corrBanner}${roBanner}${unmatchedBanner}${main}${suggBlock}`;

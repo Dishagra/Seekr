@@ -1,91 +1,142 @@
-"""Score the film with ffmpeg — there is no sample library here, so every
-sound is synthesised.
+"""Score the film. No sample library here, so every sound is built from
+scratch — but built as an instrument, not as a test tone.
 
-A quiet held chord underneath, a low swell at each section card, and soft
-key ticks while text is typed. Nothing melodic: the picture is doing the
-talking and the sound is there to stop the silence feeling like a fault.
+The first attempt was sine drones with a tremolo on them, which is exactly
+what a signal generator sounds like. This is closer to the ambient beds used
+under product films: struck tones with harmonics and a long decay, a soft
+sub for a section change, and air rather than a held pitch.
 """
 from __future__ import annotations
 
 import json
+import math
 import pathlib
-import subprocess
+import struct
+import wave
 
 HERE = pathlib.Path(__file__).parent
 AUDIO = HERE / "audio"
 AUDIO.mkdir(exist_ok=True)
+SR = 48000
 
-# A minor 9th, spelled low and wide. Quiet, slightly detuned so it breathes.
-CHORD = [55.00, 110.00, 164.81, 220.00, 246.94, 329.63]
-DETUNE = [0, 0.6, -0.5, 0.4, -0.3, 0.5]
-
-
-def run(args: list[str]):
-    subprocess.run(args, check=True, capture_output=True)
+# A pentatonic set: no semitone clashes, so any two notes can overlap safely.
+SCALE = {"a2": 110.00, "c3": 130.81, "d3": 146.83, "e3": 164.81, "g3": 196.00,
+         "a3": 220.00, "c4": 261.63, "d4": 293.66, "e4": 329.63, "g4": 392.00,
+         "a4": 440.00, "c5": 523.25, "e5": 659.25}
 
 
-def pad(seconds: float, out: pathlib.Path):
-    """The bed: detuned sines, filtered dark, with a long reverb tail."""
-    inputs, mix = [], []
-    for i, (f, d) in enumerate(zip(CHORD, DETUNE)):
-        inputs += ["-f", "lavfi", "-t", f"{seconds}",
-                   "-i", f"sine=frequency={f + d}:sample_rate=48000"]
-        # Each voice drifts on its own slow cycle. Written as a volume
-        # expression because tremolo will not go below 0.1Hz, and the movement
-        # wanted here is slower than that — closer to breathing than vibrato.
-        rate = 0.021 + i * 0.007
-        phase = i * 1.1
-        mix.append(
-            f"[{i}:a]volume='0.16*(0.62+0.38*sin(2*PI*{rate:.4f}*t+{phase:.2f}))'"
-            f":eval=frame[v{i}]"
-        )
-    chain = ";".join(mix)
-    chain += ";" + "".join(f"[v{i}]" for i in range(len(CHORD)))
-    chain += f"amix=inputs={len(CHORD)}:normalize=0,"
-    chain += ("lowpass=f=520,highpass=f=45,"
-              "aecho=0.8:0.9:600|1100|1700:0.35|0.24|0.16,"
-              "lowpass=f=900,"
-              f"afade=t=in:st=0:d=3,afade=t=out:st={seconds - 4:.2f}:d=4,"
-              "volume=0.42[out]")
-    run(["ffmpeg", "-y", "-loglevel", "error", *inputs,
-         "-filter_complex", chain, "-map", "[out]", "-ac", "2", str(out)])
+def write(path: pathlib.Path, samples: list[float], peak: float = 0.9):
+    top = max(1e-9, max(abs(s) for s in samples))
+    gain = peak / top
+    with wave.open(str(path), "w") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        frames = bytearray()
+        for s in samples:
+            v = int(max(-1.0, min(1.0, s * gain)) * 32000)
+            frames += struct.pack("<hh", v, v)
+        w.writeframes(bytes(frames))
 
 
-def swell(out: pathlib.Path):
-    """A low, soft rise for a section card."""
-    run(["ffmpeg", "-y", "-loglevel", "error",
-         "-f", "lavfi", "-t", "1.6", "-i", "anoisesrc=color=brown:sample_rate=48000",
-         "-af", ("lowpass=f=260,volume=0.9,"
-                 "afade=t=in:st=0:d=1.1,afade=t=out:st=1.1:d=0.5,"
-                 "aecho=0.8:0.85:420:0.3,volume=0.5"),
-         "-ac", "2", str(out)])
+def struck(freq: float, seconds: float, decay: float = 3.2,
+           partials=(1, 2, 3, 4.2), weights=(1.0, 0.42, 0.18, 0.07)) -> list[float]:
+    """A struck tone — harmonics fading at different rates, like something hit.
+
+    A pure sine reads as electronic; the overtones are what make it sound as
+    though an object made the sound.
+    """
+    n = int(SR * seconds)
+    out = [0.0] * n
+    for p, wgt in zip(partials, weights):
+        w = 2 * math.pi * freq * p
+        d = decay * (1 + 0.55 * (p - 1))          # higher partials die sooner
+        for i in range(n):
+            t = i / SR
+            out[i] += wgt * math.sin(w * t) * math.exp(-d * t)
+    # a soft attack, so nothing clicks at the start
+    a = int(SR * 0.006)
+    for i in range(min(a, n)):
+        out[i] *= i / a
+    return out
 
 
-def tick(out: pathlib.Path):
-    """A key press: a very short filtered click, not a beep."""
-    run(["ffmpeg", "-y", "-loglevel", "error",
-         "-f", "lavfi", "-t", "0.045", "-i", "anoisesrc=color=white:sample_rate=48000",
-         "-af", ("highpass=f=1400,lowpass=f=5200,"
-                 "afade=t=out:st=0.004:d=0.04,volume=0.16"),
-         "-ac", "2", str(out)])
+def bed(seconds: float) -> list[float]:
+    """Air, not a chord: filtered noise that swells and recedes, with two very
+    quiet low tones under it for weight."""
+    n = int(SR * seconds)
+    out = [0.0] * n
+    # one-pole lowpassed noise, seeded so the film sounds the same every build
+    rnd = 12345
+    lp = 0.0
+    for i in range(n):
+        rnd = (1103515245 * rnd + 12345) % (1 << 31)
+        white = (rnd / (1 << 30)) - 1.0
+        lp += 0.0016 * (white - lp)               # very dark
+        t = i / SR
+        swell = 0.55 + 0.45 * math.sin(2 * math.pi * 0.035 * t)
+        out[i] = lp * 46.0 * swell
+    for f, amp in ((55.0, 0.05), (82.41, 0.035)):
+        w = 2 * math.pi * f
+        for i in range(n):
+            t = i / SR
+            out[i] += amp * math.sin(w * t) * (0.6 + 0.4 * math.sin(2 * math.pi * 0.021 * t))
+    fade = int(SR * 2.5)
+    for i in range(min(fade, n)):
+        out[i] *= i / fade
+        out[n - 1 - i] *= i / fade
+    return out
 
 
-def chime(out: pathlib.Path):
-    """Results landing: two soft partials, quickly gone."""
-    run(["ffmpeg", "-y", "-loglevel", "error",
-         "-f", "lavfi", "-t", "1.2", "-i", "sine=frequency=659.25:sample_rate=48000",
-         "-f", "lavfi", "-t", "1.2", "-i", "sine=frequency=987.77:sample_rate=48000",
-         "-filter_complex",
-         ("[0:a]volume=0.5[a];[1:a]volume=0.3[b];[a][b]amix=inputs=2:normalize=0,"
-          "afade=t=out:st=0.05:d=1.0,aecho=0.8:0.88:320:0.28,volume=0.30[out]"),
-         "-map", "[out]", "-ac", "2", str(out)])
+def sub(seconds: float = 1.1) -> list[float]:
+    """The weight under a section change: a low tone that drops in pitch."""
+    n = int(SR * seconds)
+    out = [0.0] * n
+    phase = 0.0
+    for i in range(n):
+        t = i / SR
+        f = 78.0 * math.exp(-1.6 * t) + 34.0
+        phase += 2 * math.pi * f / SR
+        out[i] = math.sin(phase) * math.exp(-2.6 * t)
+    return out
+
+
+def whoosh(seconds: float = 0.9) -> list[float]:
+    """Air moving — the transition sound, made from noise sweeping darker."""
+    n = int(SR * seconds)
+    out = [0.0] * n
+    rnd = 99991
+    lp = 0.0
+    for i in range(n):
+        rnd = (1103515245 * rnd + 12345) % (1 << 31)
+        white = (rnd / (1 << 30)) - 1.0
+        t = i / SR
+        cut = 0.02 * math.exp(-2.2 * t) + 0.0015
+        lp += cut * (white - lp)
+        env = math.sin(math.pi * min(1.0, t / seconds)) ** 1.6
+        out[i] = lp * 26.0 * env
+    return out
+
+
+def chord(names: list[str], seconds: float, decay: float = 2.2) -> list[float]:
+    n = int(SR * seconds)
+    out = [0.0] * n
+    for k, name in enumerate(names):
+        voice = struck(SCALE[name], seconds, decay=decay)
+        offset = int(SR * 0.055 * k)               # spread, so it is played not triggered
+        for i in range(n - offset):
+            out[i + offset] += voice[i] * (0.85 ** k)
+    return out
 
 
 if __name__ == "__main__":
-    manifest = json.loads((HERE / "marks.json").read_text())
-    seconds = manifest["frames"] / manifest["fps"]
-    pad(seconds, AUDIO / "pad.wav")
-    swell(AUDIO / "swell.wav")
-    tick(AUDIO / "tick.wav")
-    chime(AUDIO / "chime.wav")
-    print(f"pad {seconds:.1f}s, swell, tick, chime written")
+    c = json.loads((HERE / "cues.json").read_text())
+    seconds = min(c["length"], 60.0)
+    write(AUDIO / "bed.wav", bed(seconds + 1.0), peak=0.5)
+    write(AUDIO / "mark_in.wav", chord(["a3", "e4", "a4"], 3.0), peak=0.55)
+    write(AUDIO / "mark_soft.wav", chord(["d4", "g4"], 2.4, decay=2.8), peak=0.4)
+    write(AUDIO / "sub.wav", sub(), peak=0.6)
+    write(AUDIO / "whoosh.wav", whoosh(), peak=0.32)
+    write(AUDIO / "land.wav", chord(["e4", "a4", "c5"], 2.2, decay=2.6), peak=0.42)
+    write(AUDIO / "close.wav", chord(["a2", "e3", "a3", "c4", "e4"], 5.0, decay=1.1), peak=0.62)
+    print(f"scored {seconds:.1f}s: bed, two marks, sub, whoosh, land, close")

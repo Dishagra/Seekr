@@ -1,0 +1,100 @@
+{
+ "length": 72.9579458236696,
+ "marks": [
+  {
+   "name": "title",
+   "kind": "card",
+   "t": 0.0
+  },
+  {
+   "name": "premise",
+   "kind": "card",
+   "t": 1.7765619277954101
+  },
+  {
+   "name": "ask",
+   "kind": "zoom_search",
+   "t": 3.579658889770508
+  },
+  {
+   "name": "breadth_card",
+   "kind": "card",
+   "t": 11.343810653686512
+  },
+  {
+   "name": "breadth_climate",
+   "kind": "zoom_search",
+   "t": 13.145883369445789
+  },
+  {
+   "name": "breadth_bio",
+   "kind": "plain",
+   "t": 20.6573831558227
+  },
+  {
+   "name": "correction",
+   "kind": "zoom_search",
+   "t": 28.821242094039814
+  },
+  {
+   "name": "provenance_card",
+   "kind": "card",
+   "t": 36.285084199905306
+  },
+  {
+   "name": "provenance_person",
+   "kind": "plain",
+   "t": 38.08424510955802
+  },
+  {
+   "name": "pipelines_card",
+   "kind": "card",
+   "t": 42.060680007934515
+  },
+  {
+   "name": "pipelines",
+   "kind": "plain",
+   "t": 43.866733121871896
+  },
+  {
+   "name": "discovery_card",
+   "kind": "card",
+   "t": 46.926472759246785
+  },
+  {
+   "name": "discovery",
+   "kind": "zoom_search",
+   "t": 48.74489169120785
+  },
+  {
+   "name": "shortlist_card",
+   "kind": "card",
+   "t": 57.641975927352995
+  },
+  {
+   "name": "shortlist_save",
+   "kind": "plain",
+   "t": 59.36470985412607
+  },
+  {
+   "name": "shortlist_page",
+   "kind": "plain",
+   "t": 62.79733381271375
+  },
+  {
+   "name": "api_card",
+   "kind": "card",
+   "t": 65.322176885605
+  },
+  {
+   "name": "api",
+   "kind": "plain",
+   "t": 67.04514112472549
+  },
+  {
+   "name": "close",
+   "kind": "card",
+   "t": 71.27813811302202
+  }
+ ]
+}

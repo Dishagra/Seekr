@@ -50,6 +50,7 @@ class Chrome:
             raise SystemExit("could not reach Chrome over CDP")
         self.ws = websocket.create_connection(ws_url, timeout=180, suppress_origin=True)
         self.n = 0
+        self.stamps: list[float] = []
         self.send("Page.enable")
         self.send("Runtime.enable")
         self.send("Emulation.setDeviceMetricsOverride",
@@ -71,9 +72,15 @@ class Chrome:
         return r.get("result", {}).get("value")
 
     def shot(self, path):
-        data = self.send("Page.captureScreenshot", format="png")["data"]
         import base64
+        import time as _t
+
+        data = self.send("Page.captureScreenshot", format="png")["data"]
         path.write_bytes(base64.b64decode(data))
+        # Screenshot latency varies by tens of milliseconds. Encoding frames at
+        # a constant rate when they were captured at a variable one is exactly
+        # what makes the motion judder, so the real time is kept per frame.
+        self.stamps.append(_t.time())
 
     def close(self):
         try:
