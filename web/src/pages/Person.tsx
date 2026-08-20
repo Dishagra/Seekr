@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, errorMessage, isUnauthorized } from "../api/client";
+import { api, apiBlob, errorMessage, isUnauthorized } from "../api/client";
 import { Banner, Loading } from "../components/EmptyState";
 import { Network } from "../components/Network";
 import { Shell } from "../components/Shell";
@@ -66,6 +66,8 @@ export function Person() {
   const { id = "" } = useParams();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   useWorking(!profile && !error);
 
@@ -146,7 +148,29 @@ export function Person() {
             {person.id} · updated {day(person.updated_at)}
           </div>
         </div>
+
+        {/* the report a human reads before a conversation */}
+        <button
+          className="btn"
+          disabled={pdfBusy}
+          onClick={async () => {
+            setPdfBusy(true);
+            try {
+              const blob = await apiBlob(`/v1/persons/${person.id}/dossier.pdf`);
+              const url = URL.createObjectURL(blob);
+              window.open(url, "_blank", "noopener");
+              setTimeout(() => URL.revokeObjectURL(url), 60_000);
+            } catch (e) {
+              if (!isUnauthorized(e)) setPdfError(errorMessage(e));
+            } finally {
+              setPdfBusy(false);
+            }
+          }}
+        >
+          {pdfBusy ? "Building…" : "Dossier PDF"}
+        </button>
       </div>
+      {pdfError && <Banner>{pdfError}</Banner>}
 
       <div className="grid2">
         <section className="block">
