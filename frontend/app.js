@@ -96,7 +96,7 @@ function shell(active, topbar, body){
       </div>
     </aside>
     <main>
-      ${active==="#/search" ? `<div class="backdrop" aria-hidden="true">${markSvg("", 460)}</div>` : ""}
+      ${active==="#/search" ? `<div class="backdrop" aria-hidden="true">${markSvg("", 620)}</div>` : ""}
       <div class="topbar">${topbar}</div>
       <div class="page" id="page">${body}</div>
     </main>

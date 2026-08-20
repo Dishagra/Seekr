@@ -101,14 +101,24 @@ main{min-width:0; display:flex; flex-direction:column; position:relative; overfl
    enough in contrast that text over it is unaffected; hidden on narrow
    screens where it would crowd the content instead of framing it. */
 .backdrop{
-  /* Fixed, not absolute: anchored to the bottom of a tall page it sits below
-     the fold and is never seen. Whole, not bled off the edge — a cropped logo
-     reads as a mistake. And far fainter than a stroked mark would need: a
-     filled shape carries much more ink for the same opacity. */
-  position:fixed; right:36px; bottom:28px; z-index:0;
-  color:var(--ink); opacity:.028; pointer-events:none; user-select:none;
-  transform:rotate(-6deg);
+  /* Centred in the main pane — offset by half the rail so it reads as the
+     middle of the content, not the middle of the window. Fixed, so it stays
+     put as the results scroll past it. Sized past the content column so it
+     is still visible either side of an opaque card. */
+  position:fixed; top:50%; left:calc(50% + 118px); z-index:0;
+  transform:translate(-50%, -50%) rotate(-6deg);
+  color:var(--ink); pointer-events:none; user-select:none;
+  /* Above the content, not behind it: the results card is opaque, so a
+     watermark underneath is invisible the moment there are results. Multiply
+     lets it darken whatever it crosses by a hair instead — paper showing
+     through the page rather than a shape hidden under it. */
+  z-index:5; mix-blend-mode:multiply; opacity:.055;
 }
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .backdrop{mix-blend-mode:screen; opacity:.05}
+}
+:root[data-theme="dark"] .backdrop{mix-blend-mode:screen; opacity:.05}
+@media (max-width:1100px){ .backdrop{left:50%} }
 .backdrop svg{display:block}
 @media (max-width:900px){ .backdrop{display:none} }
 .topbar, .page{position:relative; z-index:1}
