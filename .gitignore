@@ -34,3 +34,12 @@ web/dist/
 .vercel
 .DS_Store
 seekr.log
+.DS_Store
+.vercel/
+.pytest_cache/
+*.egg-info/
+seekr-main.zip
+Recruitment_Screener.zip
+demo/frames/
+demo/check/
+demo/film.log
