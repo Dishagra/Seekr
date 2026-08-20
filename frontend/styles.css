@@ -350,6 +350,16 @@ table.data td.num{text-align:right; padding-right:0; font-variant-numeric:tabula
 .gatebox .mark svg path{stroke:currentColor; stroke-width:34}
 .gatebox h1{font-size:18px; font-weight:600; margin-bottom:4px}
 .gatebox p{color:var(--muted); font-size:13px; margin-bottom:16px}
+.secretfield{position:relative; display:block}
+.secretfield input{padding-right:38px !important}
+.reveal{
+  position:absolute; right:5px; top:50%; transform:translateY(-50%);
+  display:grid; place-items:center; width:28px; height:28px; padding:0;
+  background:none; border:0; border-radius:var(--radius-sm); cursor:pointer;
+  color:var(--faint); transition:color var(--quick) var(--ease), background var(--quick) var(--ease);
+}
+.reveal:hover{color:var(--ink2); background:var(--surface2)}
+.reveal:focus-visible{outline:none; color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
 .gatebox input{width:100%; font:inherit; padding:9px 11px; border:1px solid var(--line);
   border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); margin-bottom:10px}
 .gatebox input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}

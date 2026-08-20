@@ -14,6 +14,8 @@ const ICON = {
   back:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   thumbUp:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M7 22V10l5-8a2.5 2.5 0 0 1 2.4 3.2L13.5 9H19a2.5 2.5 0 0 1 2.4 3.1l-1.7 7A2.5 2.5 0 0 1 17.3 22z"/><rect x="2" y="10" width="5" height="12" rx="1"/></svg>',
   thumbDown:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M17 2v12l-5 8a2.5 2.5 0 0 1-2.4-3.2l.9-3.8H5a2.5 2.5 0 0 1-2.4-3.1l1.7-7A2.5 2.5 0 0 1 6.7 2z"/><rect x="17" y="2" width="5" height="12" rx="1"/></svg>',
+  eye:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z"/><circle cx="12" cy="12" r="2.7"/></svg>',
+  eyeOff:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10.7 6.2A9.9 9.9 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a18 18 0 0 1-3.2 4M6.3 7.9A17.7 17.7 0 0 0 2 12s3.6 6.5 10 6.5a10 10 0 0 0 4-.8"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m3 3 18 18"/></svg>',
   bookmark:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
   linkedin:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5M2.5 9.5h5V21h-5zM10 9.5h4.7v1.6c.7-1.2 2-1.9 3.6-1.9 3 0 4.2 1.9 4.2 5.2V21h-5v-5.6c0-1.5-.5-2.4-1.8-2.4-1 0-1.6.7-1.9 1.4-.1.2-.1.6-.1.9V21h-5z"/></svg>',
   github:'<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2"/></svg>',
@@ -37,10 +39,29 @@ function renderGate(){
     <div class="mark">${ICON.logo}</div>
     <h1>Sign in to Seekr</h1>
     <p>Paste the API token (RIP_API_TOKEN). It is stored only in this browser.</p>
-    <input id="tok" type="password" placeholder="Token" autocomplete="off" autofocus>
+    <div class="secretfield">
+      <input id="tok" type="password" placeholder="Token" autocomplete="off"
+             spellcheck="false" autocapitalize="off" autofocus>
+      <button type="button" id="tokeye" class="reveal" aria-pressed="false"
+              aria-label="Show token" title="Show token"
+              onclick="toggleTokenVisible()">${ICON.eye}</button>
+    </div>
     <button class="btn primary" onclick="saveToken()">Continue</button>
   </div></div>`;
   $("#tok").addEventListener("keydown", e=>{ if(e.key==="Enter") saveToken(); });
+}
+/* The token is masked by default — it is a credential, and people paste it
+   with someone watching. The eye is for checking a paste actually landed. */
+function toggleTokenVisible(){
+  const input = $("#tok"), btn = $("#tokeye");
+  const show = input.type === "password";
+  input.type = show ? "text" : "password";
+  btn.innerHTML = show ? ICON.eyeOff : ICON.eye;
+  btn.setAttribute("aria-pressed", String(show));
+  const label = show ? "Hide token" : "Show token";
+  btn.setAttribute("aria-label", label);
+  btn.title = label;
+  input.focus();
 }
 function saveToken(){ localStorage.setItem("seekr_token", $("#tok").value.trim()); route(); }
 function signOut(){ localStorage.removeItem("seekr_token"); localStorage.removeItem("rip_token"); renderGate(); }
