@@ -17,8 +17,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from capture import Chrome, UI, TOKEN, OUT                      # noqa: E402
 import scenes                                                    # noqa: E402
 from scenes import (MARKS, card, caption, caption_corrected,      # noqa: E402
-                    caption_counted, caption_off, caption_typed,
-                    goto_ui, mark, record, type_query)
+                    caption_counted, caption_off, caption_typed, click_live,
+                    goto_ui, mark, record, submit, type_query)
 
 MARK = re.search(r'd="([^"]+)"',
                  (pathlib.Path(__file__).parents[1] / "frontend/assets/mark.svg").read_text()).group(1)
@@ -64,7 +64,7 @@ def main():
         record(c, 0.4)
         type_query(c, "machine learning researchers in India")
         record(c, 0.5)
-        c.js("runQuery()")
+        submit(c)
         record(c, 1.9)
         caption_off(c)
         record(c, 0.4)
@@ -78,7 +78,7 @@ def main():
         goto_ui(c)
         mark("breadth_climate", "zoom_search")
         type_query(c, "climate model intercomparison researchers")
-        c.js("runQuery('true')")
+        click_live(c)
         record(c, 0.5)
         c.js("window.scrollBy({top:190, behavior:'smooth'})")
         record(c, 0.5)
@@ -90,7 +90,7 @@ def main():
         record(c, 0.3)
         mark("breadth_bio")
         type_query(c, "structural biologists working on protein folding")
-        c.js("runQuery('true')")
+        click_live(c)
         record(c, 0.5)
         c.js("window.scrollBy({top:190, behavior:'smooth'})")
         record(c, 0.5)
@@ -100,18 +100,6 @@ def main():
         caption_off(c)
         record(c, 0.4)
 
-        # ---- corrections ----
-        mark("correction", "zoom_search")
-        type_query(c, "pythonn developers in bangalor")
-        c.js("runQuery()")
-        record(c, 0.7)
-        caption_corrected(c, "Understanding", "pythonn developers in bangalor",
-                          "python · Bangalore",
-                          "Spelling is corrected against the corpus, and the answer "
-                          "says what it searched for.")
-        record(c, 0.5)
-        caption_off(c)
-        record(c, 0.4)
         print(f"[film] act one: {scenes.frame_no}")
         _act_two(c)
     finally:
@@ -122,116 +110,116 @@ def main():
 
 
 def _act_two(c: Chrome):
-    """Provenance, the pipelines behind it, discovery, shortlists and the API."""
-    # ---- provenance ----
-    mark("provenance_card", "card")
-    card(c, "Every claim points back at where it came from.",
-         sub="A profile is not something we assert. It is evidence we collected, "
-             "each piece carrying its source and the date it was seen.",
-         kicker="Provenance", seconds=1.6, size=40, mark_svg=MARK_SVG)
+    """The live sources reporting for themselves, the dossier, and shortlists."""
+    # ---- every source, reporting for itself ----
+    mark("sources_card", "card")
+    card(c, "Five sources, asked in turn.",
+         sub="A live search is not one request. Each source reports what it was "
+             "asked, what it found, and what was worth keeping.",
+         kicker="Live", seconds=1.6, size=40, mark_svg=MARK_SVG)
     goto_ui(c)
-    mark("provenance_person")
-    c.js('document.querySelector("#q").value="geoffrey hinton"; runQuery()')
-    time.sleep(3.0)
-    record(c, 0.4)
-    c.js('document.querySelector("table.list tbody tr").click()')
-    time.sleep(3.2)
-    caption(c, "Provenance", "One person, assembled from many sources",
-            "Identifiers, affiliations, publications and links — reconciled into "
-            "a single record.")
-    record(c, 1.5)
-    for _ in range(2):
-        c.js("window.scrollBy({top:620, behavior:'smooth'})")
-        record(c, 0.55)
-    caption_off(c)
-    record(c, 0.3)
-
-    # ---- the pipelines ----
-    mark("pipelines_card", "card")
-    card(c, "Nine sources, one pipeline.",
-         sub="Each connector normalises into the same shape, then resolution "
-             "decides whether it is a new person or more evidence about a known one.",
-         kicker="Pipelines", seconds=1.6, size=40, mark_svg=MARK_SVG)
-    mark("pipelines")
-    c.send("Page.navigate", url=UI + "#/sources")
-    time.sleep(3.0)
-    caption(c, "Pipelines", "Every source, and what it has contributed",
-            "Records ingested, when each was last refreshed, and what it is "
-            "permitted to fetch.")
-    record(c, 1.9)
-    c.js("window.scrollBy({top:420, behavior:'smooth'})")
-    record(c, 0.6)
-    caption_off(c)
-    record(c, 0.3)
-
-    # ---- discovery ----
-    mark("discovery_card", "card")
-    card(c, "The graph grows every time you search.",
-         sub="A question the corpus cannot answer fully is put to live sources. "
-             "What comes back is resolved, stored, and free to ask again.",
-         kicker="Discovery", seconds=1.6, size=40, mark_svg=MARK_SVG)
-    goto_ui(c)
-    mark("discovery", "zoom_search")
+    mark("source_cards", "zoom_search")
     type_query(c, "rust developers in berlin")
-    c.js("runQuery('true')")
-    record(c, 3.0)
-    caption_counted(c, "Discovery", "{n} new people, resolved and kept", 10,
-                    "Found live, matched against everyone already in the graph, "
-                    "then written in.")
-    record(c, 0.5)
+    click_live(c)
+    record(c, 1.2)
+    caption(c, "Live", "Each source answers for itself",
+            "Searching, found, kept — or skipped, and why.")
+    record(c, 7.0)
     caption_off(c)
-    record(c, 0.4)
+    record(c, 0.5)
+
+    # ---- provenance, briefly ----
+    # A well-evidenced record, so the dossier that follows shows what the
+    # report looks like when the sources have plenty to say. A GitHub-only
+    # profile scores low and honestly, but it is not what to lead with.
+    mark("person")
+    goto_ui(c, settle=1.4)
+    type_query(c, "geoffrey hinton", per_char=0.02)
+    submit(c)
+    time.sleep(2.6)
+    # Wait for the row to exist, then for the route to change. Sleeping a
+    # fixed interval and hoping produced a dossier for the person "search".
+    for _ in range(30):
+        if c.js("!!document.querySelector('table tbody tr')"):
+            break
+        time.sleep(0.3)
+    c.js("document.querySelector('table tbody tr').click()")
+    person_id = None
+    for _ in range(30):
+        h = c.js("location.hash") or ""
+        if "/person/" in h:
+            person_id = h.rsplit("/", 1)[-1]
+            break
+        time.sleep(0.3)
+    if not person_id:
+        raise SystemExit("the person page never opened; the film would be wrong")
+    time.sleep(1.6)
+    caption(c, "Provenance", "Every claim points back at a source",
+            "Identifiers, affiliations and links, reconciled into one record.")
+    record(c, 2.0)
+    c.js("window.scrollBy({top:560, behavior:'smooth'})")
+    record(c, 1.2)
+    caption_off(c)
+    record(c, 0.3)
+
+    # ---- the dossier ----
+    mark("dossier_card", "card")
+    card(c, "One page a human can act on.",
+         sub="Everything Seekr holds about a person, scored on how well evidenced "
+             "it is, with the source of every line — and what it does not establish.",
+         kicker="Dossier", seconds=2.0, size=40, mark_svg=MARK_SVG)
+    mark("dossier")
+    # Back to the app first: a title card leaves the tab on a data: URL, where
+    # a relative /v1 fetch has no origin and localStorage is empty. Then fetch
+    # the dossier the way the app does — navigating straight to the endpoint
+    # sends no Authorization header and films a 401.
+    goto_ui(c, f"#/person/{person_id}", settle=1.6)
+    c.js("""(async function(){
+      const id = "%s";
+      const res = await fetch(`/v1/persons/${id}/dossier`, {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('seekr_token') },
+      });
+      const html = await res.text();
+      document.open(); document.write(html); document.close();
+    })()""" % person_id)
+    time.sleep(2.6)
+    caption(c, "Dossier", "Evidence, scored — not the person",
+            "A rubric over the record itself: corroboration, recency, identity "
+            "strength, published output.")
+    record(c, 3.0)
+    caption_off(c)
+    for _ in range(3):
+        c.js("window.scrollBy({top:620, behavior:'smooth'})")
+        record(c, 1.5)
+    record(c, 0.5)
 
     # ---- shortlists ----
     mark("shortlist_card", "card")
     card(c, "Keep the people worth keeping.",
-         sub="Save anyone into a named list. Each entry remembers the query that "
-             "found them, so the reason survives.",
+         sub="Saved into named lists, each entry remembering the query that found them.",
          kicker="Shortlists", seconds=1.6, size=40, mark_svg=MARK_SVG)
     goto_ui(c)
-    mark("shortlist_save")
-    c.js('document.querySelector("#q").value="rust developers in berlin"; runQuery()')
+    mark("shortlist")
+    type_query(c, "rust developers in berlin", per_char=0.018)
+    submit(c)
     time.sleep(3.2)
-    caption(c, "Shortlists", "Save someone in one click", "")
-    record(c, 0.7)
+    caption(c, "Shortlists", "Saved in one click", "")
+    record(c, 0.8)
     c.js("""(function(){
       window.prompt = () => "Rust · Berlin";
       const b=[...document.querySelectorAll('button')].filter(x=>x.title==='Save to a shortlist');
-      b[0] && b[0].click(); setTimeout(()=>b[2] && b[2].click(), 700);
-      setTimeout(()=>b[4] && b[4].click(), 1400);
+      b[0] && b[0].click();
+      setTimeout(()=>b[2] && b[2].click(), 650);
+      setTimeout(()=>b[4] && b[4].click(), 1300);
     })()""")
-    record(c, 1.9)
-    caption_off(c)
-    mark("shortlist_page")
-    c.send("Page.navigate", url=UI + "#/shortlists")
-    time.sleep(2.8)
-    caption(c, "Shortlists", "And the query that found them",
-            "Months later, the list still says why each person is on it.")
-    record(c, 1.9)
-    caption_off(c)
-    record(c, 0.3)
-
-    # ---- the API ----
-    mark("api_card", "card")
-    card(c, "Everything you have seen, over HTTP.",
-         sub="Faceted search, per-person evidence and provenance, an integer "
-             "cursor over every change, and signed webhooks.",
-         kicker="Integration", seconds=1.6, size=40, mark_svg=MARK_SVG)
-    mark("api")
-    c.send("Page.navigate", url="http://127.0.0.1:8000/docs")
-    time.sleep(3.4)
-    caption(c, "Integration", "A read API your own systems can build on", "")
-    record(c, 0.5)
-    for _ in range(2):
-        c.js("window.scrollBy({top:560, behavior:'smooth'})")
-        record(c, 1.5)
+    record(c, 2.6)
     caption_off(c)
     record(c, 0.4)
 
     # ---- close ----
     mark("close", "card")
     card(c, "Seekr", "Evidence in. Structure out.", kicker="Deccan AI",
-         seconds=1.6, size=76, mark_svg=MARK_SVG)
+         seconds=3.0, size=76, mark_svg=MARK_SVG)
     print(f"[film] captured {scenes.frame_no} frames")
 
 

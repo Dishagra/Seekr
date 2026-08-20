@@ -1,5 +1,5 @@
 {
- "length": 72.9579458236696,
+ "length": 80.54592270851289,
  "marks": [
   {
    "name": "title",
@@ -9,92 +9,67 @@
   {
    "name": "premise",
    "kind": "card",
-   "t": 1.7765619277954101
+   "t": 1.6997368335723873
   },
   {
    "name": "ask",
    "kind": "zoom_search",
-   "t": 3.579658889770508
+   "t": 3.539341926574708
   },
   {
    "name": "breadth_card",
    "kind": "card",
-   "t": 11.343810653686512
+   "t": 12.905893373489342
   },
   {
    "name": "breadth_climate",
    "kind": "zoom_search",
-   "t": 13.145883369445789
+   "t": 14.707624340057325
   },
   {
    "name": "breadth_bio",
    "kind": "plain",
-   "t": 20.6573831558227
+   "t": 22.58262434005725
   },
   {
-   "name": "correction",
+   "name": "sources_card",
+   "kind": "card",
+   "t": 31.108307218551435
+  },
+  {
+   "name": "source_cards",
    "kind": "zoom_search",
-   "t": 28.821242094039814
+   "t": 32.809567928314024
   },
   {
-   "name": "provenance_card",
-   "kind": "card",
-   "t": 36.285084199905306
-  },
-  {
-   "name": "provenance_person",
+   "name": "person",
    "kind": "plain",
-   "t": 38.08424510955802
+   "t": 47.73456792831459
   },
   {
-   "name": "pipelines_card",
+   "name": "dossier_card",
    "kind": "card",
-   "t": 42.060680007934515
+   "t": 54.10108814239564
   },
   {
-   "name": "pipelines",
+   "name": "dossier",
    "kind": "plain",
-   "t": 43.866733121871896
-  },
-  {
-   "name": "discovery_card",
-   "kind": "card",
-   "t": 46.926472759246785
-  },
-  {
-   "name": "discovery",
-   "kind": "zoom_search",
-   "t": 48.74489169120785
+   "t": 56.21760540008613
   },
   {
    "name": "shortlist_card",
    "kind": "card",
-   "t": 57.641975927352995
+   "t": 68.1846296310436
   },
   {
-   "name": "shortlist_save",
+   "name": "shortlist",
    "kind": "plain",
-   "t": 59.36470985412607
-  },
-  {
-   "name": "shortlist_page",
-   "kind": "plain",
-   "t": 62.79733381271375
-  },
-  {
-   "name": "api_card",
-   "kind": "card",
-   "t": 65.322176885605
-  },
-  {
-   "name": "api",
-   "kind": "plain",
-   "t": 67.04514112472549
+   "t": 69.87791147232173
   },
   {
    "name": "close",
    "kind": "card",
-   "t": 71.27813811302202
+   "t": 77.45291147232201
   }
  ]
 }

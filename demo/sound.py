@@ -61,6 +61,33 @@ def struck(freq: float, seconds: float, decay: float = 3.2,
     return out
 
 
+# Four chords, each held about eight seconds. A film that sits on one pitch
+# for a minute reads as a hold tone; a slow progression reads as music without
+# ever asking for attention.
+PROGRESSION = [
+    ["a2", "e3", "a3", "c4"],     # i
+    ["g3", "d4", "g4"],           # VII
+    ["c3", "g3", "c4", "e4"],     # III
+    ["d3", "a3", "d4", "g4"],     # iv
+]
+
+
+def progression(seconds: float) -> list[float]:
+    """The harmonic bed: struck chords, overlapping, moving slowly."""
+    n = int(SR * seconds)
+    out = [0.0] * n
+    hold = 8.4
+    for i in range(int(seconds / hold) + 1):
+        notes = PROGRESSION[i % len(PROGRESSION)]
+        start = int(SR * i * hold)
+        # long decay so each chord is still ringing under the next
+        voice = chord(notes, min(seconds, hold * 1.9), decay=0.55)
+        for k, v in enumerate(voice):
+            if start + k < n:
+                out[start + k] += v * 0.5
+    return out
+
+
 def bed(seconds: float) -> list[float]:
     """Air, not a chord: filtered noise that swells and recedes, with two very
     quiet low tones under it for weight."""
@@ -132,11 +159,20 @@ def chord(names: list[str], seconds: float, decay: float = 2.2) -> list[float]:
 if __name__ == "__main__":
     c = json.loads((HERE / "cues.json").read_text())
     seconds = min(c["length"], 60.0)
-    write(AUDIO / "bed.wav", bed(seconds + 1.0), peak=0.5)
+    air = bed(seconds + 1.0)
+    harmony = progression(seconds + 1.0)
+    mixed = [a * 0.55 + h for a, h in zip(air, harmony)]
+    fade = int(SR * 3.0)
+    for i in range(min(fade, len(mixed))):
+        mixed[i] *= i / fade
+        mixed[len(mixed) - 1 - i] *= i / fade
+    write(AUDIO / "bed.wav", mixed, peak=0.62)
     write(AUDIO / "mark_in.wav", chord(["a3", "e4", "a4"], 3.0), peak=0.55)
     write(AUDIO / "mark_soft.wav", chord(["d4", "g4"], 2.4, decay=2.8), peak=0.4)
     write(AUDIO / "sub.wav", sub(), peak=0.6)
     write(AUDIO / "whoosh.wav", whoosh(), peak=0.32)
     write(AUDIO / "land.wav", chord(["e4", "a4", "c5"], 2.2, decay=2.6), peak=0.42)
     write(AUDIO / "close.wav", chord(["a2", "e3", "a3", "c4", "e4"], 5.0, decay=1.1), peak=0.62)
+    # the dossier appearing: a brighter, higher figure than a section change
+    write(AUDIO / "reveal.wav", chord(["e4", "a4", "c5", "e5"], 3.4, decay=1.5), peak=0.5)
     print(f"scored {seconds:.1f}s: bed, two marks, sub, whoosh, land, close")

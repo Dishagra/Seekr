@@ -119,11 +119,39 @@ def caption_off(c: Chrome):
     c.js("(document.getElementById('demo-cap')||{classList:{remove(){}}}).classList.remove('on')")
 
 
+SET_VALUE = """(function(v){
+  const el = document.querySelector('input');
+  if (!el) return false;
+  // React owns the input's value, so assigning to .value is ignored. Go
+  // through the native setter and raise the event React actually listens for.
+  const set = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype, 'value').set;
+  set.call(el, v);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+})"""
+
+
+def submit(c: Chrome):
+    """Run the query the way a person would — by pressing Enter."""
+    c.js("""(function(){
+      const el = document.querySelector('input');
+      el && el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+    })()""")
+
+
+def click_live(c: Chrome):
+    c.js("""(function(){
+      const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Live');
+      b && b.click();
+    })()""")
+
+
 def type_query(c: Chrome, text: str, per_char: float = 0.026):
     """Type into the search box a character at a time, recording as we go."""
-    c.js('document.querySelector("#q").focus(); document.querySelector("#q").value=""')
+    c.js("document.querySelector('input') && document.querySelector('input').focus()")
     for i in range(1, len(text) + 1):
-        c.js(f'document.querySelector("#q").value={text[:i]!r}')
+        c.js(f"{SET_VALUE}({text[:i]!r})")
         t0 = time.time()
         c.shot(frame_path())
         rest = per_char - (time.time() - t0)

@@ -33,6 +33,8 @@ def main():
         else:
             cues.append(("whoosh", max(0, t - 0.25), 0.5))
             cues.append(("mark_soft", t, 0.32))
+        if mk["name"] == "dossier":
+            cues.append(("reveal", t + 0.15, 0.6))
         if mk["kind"] == "zoom_search":
             cues.append(("land", t + 2.6, 0.42))     # results arriving
 
@@ -41,7 +43,7 @@ def main():
         cues.append(("close", max(0.0, at(marks[-1]) - 0.2), 0.75))
     cues = [(s, t, g) for s, t, g in cues if 0 <= t < duration - 0.2]
 
-    files = ["bed", "mark_in", "mark_soft", "sub", "whoosh", "land", "close"]
+    files = ["bed", "mark_in", "mark_soft", "sub", "whoosh", "land", "close", "reveal"]
     inputs, idx = [], {}
     for k, name in enumerate(files):
         inputs += ["-i", str(AUDIO / f"{name}.wav")]
