@@ -1373,6 +1373,23 @@ def query_stream(
                 if limit:
                     parsed.limit = limit
             persons = execute(session, parsed)
+            # People a live source just returned are answers in their own
+            # right. The corpus filter can only express what the corpus
+            # already knows, so someone fetched seconds ago usually fails it —
+            # a search for experts in Hyderabad stored fifteen people and then
+            # showed none, because none of them carry a Hyderabad location
+            # yet. /v1/query already appends them; without this the cards said
+            # "10 kept" over an empty table.
+            seen = {p.id for p in persons}
+            live_ids = [s_["person_id"] for s_ in suggestions if s_.get("person_id")]
+            if live_ids:
+                extra = session.execute(
+                    select(Person).where(
+                        Person.id.in_(live_ids), Person.merged_into.is_(None)
+                    )
+                ).scalars().all()
+                persons = persons + [p for p in extra if p.id not in seen]
+
             # the same ranking /v1/query applies, so the stream and the plain
             # endpoint cannot disagree about the order
             scores = relevance_scores(session, parsed, [p.id for p in persons])
@@ -1387,6 +1404,7 @@ def query_stream(
                     row["score"] = rel.get("score")
                     row["score_components"] = rel.get("components")
                     row["matched_evidence"] = rel.get("matched_evidence")
+                row["from_live_search"] = row["id"] in set(live_ids)
                 rows.append(row)
             rows.sort(key=lambda r: (r.get("score") is None, -(r.get("score") or 0)))
             events.put({
