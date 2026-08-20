@@ -1164,19 +1164,30 @@ NOT_A_PERSON = re.compile(
 )
 
 
-def _corroborated(profile, term: str) -> bool:
-    """Did the search term turn up anywhere beyond the username?
+def _matches_only_the_name(profile, term: str) -> bool:
+    """Did the query match this person's NAME and nothing else about them?
 
-    GitHub matches literal text against the login, so "AI researchers from
-    Stanford" reached github.com/Intelligence-Manifesto and Intelligence247 —
-    real people whose only connection to the query is the word in their
-    handle. A match has to show up in the bio, an employer, a place, a skill
-    or a project to count as evidence of anything.
+    That is the signature of a false hit. GitHub matches literal text against
+    the login, so "AI researchers from Stanford" reached Intelligence247; a
+    works search for "rust compiler engineers" returns papers by people
+    surnamed Rust. In both cases the only thing connecting them to the query
+    is what they are called.
+
+    Demanding the reverse — that the query words appear somewhere in the
+    profile — is too strict for a topical source: OpenAlex matched Xavier
+    Denis on work about Rust verification, whose topics are recorded as
+    program verification and formal methods. The provider did the semantic
+    work; the profile need not echo the words back.
     """
-    words = [w for w in re.split(r"[^A-Za-z0-9+#.-]+", term.lower()) if len(w) > 2]
+    words = [w for w in re.split(r"[^A-Za-z0-9+#.-]+", (term or "").lower()) if len(w) > 2]
     if not words:
-        return True
-    haystack = " ".join(
+        return False
+
+    name_hay = " ".join(
+        str(x).lower() for x in
+        ([profile.name or ""] + list(profile.usernames or []) + list(profile.aliases or []))
+    )
+    body_hay = " ".join(
         str(x).lower() for x in (
             [profile.summary or "", profile.location or ""]
             + list(profile.organizations or [])
@@ -1185,7 +1196,9 @@ def _corroborated(profile, term: str) -> bool:
             + [getattr(pr, "description", "") or "" for pr in (profile.projects or [])]
         )
     )
-    return any(w in haystack for w in words)
+    in_name = any(w in name_hay for w in words)
+    in_body = any(w in body_hay for w in words)
+    return in_name and not in_body
 
 
 def _looks_like_a_person(name: str | None) -> bool:
@@ -1269,10 +1282,10 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
                     raise ValueError(
                         f"{item['external_id']} is named after the search term, not a person"
                     )
-                if item["source"] == "github" and not _corroborated(profile, item.get("_term", "")):
+                if _matches_only_the_name(profile, item.get("_term", "")):
                     raise ValueError(
                         f"{item['external_id']} matches '{item.get('_term')}' only in "
-                        "the username — no supporting evidence"
+                        "their name — that is a coincidence, not a connection"
                     )
                 return item, profile, None
             except Exception as exc:
