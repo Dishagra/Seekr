@@ -164,6 +164,34 @@ python -m rip.cli queue-stats   # how much work is waiting?
 
 ---
 
+## Quickest start: one script
+
+From a fresh clone, this installs everything, builds the interface, creates a
+database, and fills it with people:
+
+```bash
+./setup.sh              # 50,000 people, about 20 minutes
+./setup.sh 10000        # smaller and quicker, about 4 minutes
+```
+
+Then:
+
+```bash
+./.venv/bin/python -m rip.cli serve
+```
+
+Open <http://127.0.0.1:8000/ui> and paste the token it printed (it is also in
+`.env`).
+
+The script is safe to re-run: it skips what is already done, and the download
+can be resumed if it stops. Tested from a clean clone — 1,000 people took 42
+seconds end to end, and search worked immediately afterwards.
+
+The sections below explain what it is doing, and what to change for a real
+deployment.
+
+---
+
 ## Getting the data (a fresh clone is empty)
 
 The database is **not** in the repository, on purpose: it holds tens of
