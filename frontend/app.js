@@ -96,12 +96,13 @@ function shell(active, topbar, body){
       </div>
     </aside>
     <main>
-      ${active==="#/search" ? `<div class="backdrop" aria-hidden="true">${markSvg("", 620)}</div>` : ""}
+      <div class="backdrop" aria-hidden="true">${markSvg("", 620)}</div>
       <div class="topbar">${topbar}</div>
       <div class="page" id="page">${body}</div>
     </main>
   </div>`;
   loadRailStats();
+  bindScrollShade();
 }
 function toggleTheme(){
   const cur = document.documentElement.getAttribute("data-theme");
@@ -119,10 +120,39 @@ async function loadRailStats(){
     ]);
     const people = sources.values.reduce((m,v)=>Math.max(m,v.people),0);
     el.insertAdjacentHTML("afterbegin",
-      `<div class="stat"><span>People</span><b>${fmt(people)}</b></div>
-       <div class="stat"><span>Sources</span><b>${sources.values.length}</b></div>
-       <div class="stat"><span>Countries</span><b>${countries.values.length}</b></div>`);
+      `<div class="stat"><span>People</span><b data-to="${people}">0</b></div>
+       <div class="stat"><span>Sources</span><b data-to="${sources.values.length}">0</b></div>
+       <div class="stat"><span>Countries</span><b data-to="${countries.values.length}">0</b></div>`);
+    el.querySelectorAll("b[data-to]").forEach(countUp);
   }catch(e){}
+}
+
+/* A number that lands on its value rather than appearing fully formed. Short
+   enough not to keep anyone waiting to read it, and skipped outright for
+   anyone who asked for less motion. */
+function countUp(el){
+  const target = Number(el.dataset.to || 0);
+  if (!target || window.matchMedia("(prefers-reduced-motion: reduce)").matches){
+    el.textContent = fmt(target);
+    return;
+  }
+  const started = performance.now(), ms = 620;
+  (function step(now){
+    const t = Math.min(1, (now - started) / ms);
+    const eased = 1 - Math.pow(1 - t, 3);      // ease-out: fast, then settles
+    el.textContent = fmt(Math.round(target * eased));
+    if (t < 1) requestAnimationFrame(step);
+  })(started);
+}
+
+/* The topbar earns its shadow only once there is something scrolled under it. */
+function bindScrollShade(){
+  const bar = $(".topbar"); if(!bar) return;
+  const onScroll = () => bar.classList.toggle("scrolled", window.scrollY > 4);
+  window.removeEventListener("scroll", window.__seekrShade || (()=>{}));
+  window.__seekrShade = onScroll;
+  window.addEventListener("scroll", onScroll, {passive:true});
+  onScroll();
 }
 
 /* ---------------- search ---------------- */
@@ -355,7 +385,7 @@ function clearFilters(){
 
 // Waiting is drawn with the brand mark rather than a generic spinner.
 const MARK_LOADER = `
-  <svg class="markload" width="34" height="34" viewBox="0 0 512 512" aria-hidden="true">
+  <svg class="markload" width="72" height="72" viewBox="0 0 512 512" aria-hidden="true">
     <defs><clipPath id="mkfill"><rect x="0" y="0" width="512" height="512"/></clipPath></defs>
     <path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd" opacity=".18"/>
     <g clip-path="url(#mkfill)">

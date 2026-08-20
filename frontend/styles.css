@@ -112,7 +112,7 @@ main{min-width:0; display:flex; flex-direction:column; position:relative; overfl
      watermark underneath is invisible the moment there are results. Multiply
      lets it darken whatever it crosses by a hair instead — paper showing
      through the page rather than a shape hidden under it. */
-  z-index:5; mix-blend-mode:multiply; opacity:.055;
+  z-index:5; mix-blend-mode:multiply; opacity:.032;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]) .backdrop{mix-blend-mode:screen; opacity:.05}
@@ -296,7 +296,7 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
    cannot be "drawn" with a dash offset the way a stroked path can, and the
    real logo has hand-drawn weight variation that a uniform stroke loses —
    so the shape stays exact and the fill carries the motion instead. */
-.markload{width:34px; height:34px; color:var(--ink); display:block; margin:0 auto 14px}
+.markload{width:72px; height:72px; color:var(--ink); display:block; margin:0 auto 18px}
 .markload rect{
   transform-origin:50% 100%;
   animation:markfill 1.7s var(--ease) infinite;
@@ -402,4 +402,74 @@ table.data td.num{text-align:right; padding-right:0; font-variant-numeric:tabula
   nav{flex-direction:row; padding:8px}
   .rail-foot{display:none}
   .page, .topbar{padding-left:16px; padding-right:16px}
+}
+
+
+/* ---------- motion ----------
+   Motion here reports state: what loaded, what is active, what was pressed.
+   Nothing idles, drifts or pulses — decoration that moves on its own reads
+   as unfinished in a tool people keep open all day. Everything shares
+   --ease and stays under 320ms. */
+
+/* Theme changes dissolve rather than flash. */
+body, .rail, .card, .topbar, table.list tbody tr, .btn, .chipbtn, .pill{
+  transition:background-color var(--settle) var(--ease),
+             border-color var(--settle) var(--ease),
+             color var(--settle) var(--ease);
+}
+
+/* Controls acknowledge a press, by a hair. */
+.btn, .chipbtn, .vbtn, .reveal{
+  transition:transform var(--quick) var(--ease),
+    background-color var(--quick) var(--ease), border-color var(--quick) var(--ease),
+    color var(--quick) var(--ease), box-shadow var(--quick) var(--ease);
+}
+.btn:active, .chipbtn:active, .vbtn:active, .reveal:active{transform:scale(.98)}
+
+/* One focus treatment across the whole product, so keyboard use looks
+   deliberate rather than left to the browser. */
+:where(a, button, input, select, summary):focus-visible{
+  outline:none; box-shadow:0 0 0 3px var(--accent-soft), 0 0 0 1px var(--accent);
+  border-radius:var(--radius-sm);
+}
+
+/* The active nav item carries a marker that grows into place. */
+nav a{position:relative; transition:background-color var(--quick) var(--ease), color var(--quick) var(--ease)}
+nav a::before{
+  content:""; position:absolute; left:-10px; top:50%; width:3px; height:0;
+  border-radius:0 3px 3px 0; background:var(--accent);
+  transform:translateY(-50%); transition:height var(--settle) var(--ease);
+}
+nav a.active::before{height:18px}
+
+/* Suggestion chips and result pills arrive in sequence, as results do. */
+.examples .chipbtn, .pills .pill{animation:chipin .28s var(--ease) both}
+.examples .chipbtn:nth-child(2){animation-delay:.02s}
+.examples .chipbtn:nth-child(3){animation-delay:.04s}
+.examples .chipbtn:nth-child(4){animation-delay:.06s}
+.examples .chipbtn:nth-child(5){animation-delay:.08s}
+.examples .chipbtn:nth-child(6){animation-delay:.10s}
+.examples .chipbtn:nth-child(n+7){animation-delay:.12s}
+@keyframes chipin{from{opacity:0; transform:translateY(3px)} to{opacity:1; transform:none}}
+
+/* Rows change colour on hover and hold their position: a data table that
+   shifts under the pointer feels unstable. */
+table.list tbody tr{transition:background-color var(--quick) var(--ease)}
+
+/* Saving to a shortlist confirms itself, without the cartoon overshoot. */
+.vbtn.save.on{animation:pop .3s var(--ease)}
+@keyframes pop{0%{transform:scale(1)} 45%{transform:scale(1.12)} 100%{transform:scale(1)}}
+
+/* The filter panel opens into place. */
+.filters[open] .fgrid{animation:panel .24s var(--ease) both}
+@keyframes panel{from{opacity:0; transform:translateY(-4px)} to{opacity:1; transform:none}}
+
+/* The topbar earns a shadow only once content is scrolled beneath it. */
+.topbar{transition:box-shadow var(--settle) var(--ease)}
+.topbar.scrolled{box-shadow:0 1px 0 var(--line), 0 6px 18px -12px rgba(17,17,19,.45)}
+
+.banner{animation:cardin .28s var(--ease) both}
+
+@media (prefers-reduced-motion:reduce){
+  .examples .chipbtn, .pills .pill, .banner{animation:none; opacity:1; transform:none}
 }
