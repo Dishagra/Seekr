@@ -164,6 +164,60 @@ python -m rip.cli queue-stats   # how much work is waiting?
 
 ---
 
+## Getting the data (a fresh clone is empty)
+
+The database is **not** in the repository, on purpose: it holds tens of
+thousands of real people's names, employers and locations, and that does not
+belong on GitHub. A fresh clone gives you working code and an empty graph —
+searches find nobody and the Sources page shows nothing. That is expected.
+
+You do not need anyone to send you a database. Rebuild it from the same
+public sources it was built from:
+
+```bash
+# 1. create the tables (a few seconds)
+python -m rip.cli init-db
+
+# 2. download author records from OpenAlex, which is free and open
+python -m rip.cli harvest openalex --out authors.jsonl --limit 50000   --filter "works_count:>50"
+
+# 3. load them into the graph
+python -m rip.cli bulk-ingest openalex --file authors.jsonl
+```
+
+Measured on a laptop: **2,000 people takes about 50 seconds**, so
+
+| People | Roughly |
+|---|---|
+| 10,000 | 4 minutes |
+| 50,000 | 21 minutes |
+
+Note that 2,000 downloaded records became 1,850 people — the difference is
+resolution merging records that turned out to be the same person.
+
+Useful variations:
+
+```bash
+# people affiliated with India
+python -m rip.cli harvest openalex --out in.jsonl --limit 20000 --india
+
+# add specific people from other sources
+python -m rip.cli ingest github torvalds
+python -m rip.cli ingest openalex A5108093963
+
+# resume a harvest that stopped (it prints the cursor when it finishes)
+python -m rip.cli harvest openalex --out more.jsonl --limit 20000 --cursor "PASTE_IT"
+```
+
+Then start the app and search — it works immediately.
+
+**Copy `.env` separately.** API keys are excluded from git too. Without
+`GITHUB_TOKEN` in particular, live search is limited to 60 requests an hour
+and will look broken rather than slow. Ask whoever set the project up to send
+you the file over something private.
+
+---
+
 ## Running it without Docker
 
 If you'd rather run it directly on a server:
