@@ -52,6 +52,56 @@ CAPTION_CSS = """
 """
 
 
+MARKS: list[dict] = []          # scene boundaries, for post-production
+
+
+def mark(name: str, kind: str = "plain"):
+    """Record where a scene starts so the edit can treat it differently."""
+    import scenes as _self
+    MARKS.append({"name": name, "kind": kind, "start": _self.frame_no + 1})
+
+
+def caption_typed(c: Chrome, kicker: str, title: str, sub: str = "",
+                  per_char: float = 0.022):
+    """A caption that types itself — used where the feature is typing."""
+    caption(c, kicker, "", sub)
+    for i in range(1, len(title) + 1):
+        c.js('(document.querySelector("#demo-cap .t")||{}).textContent=%r' % title[:i])
+        t0 = time.time()
+        c.shot(frame_path())
+        rest = per_char - (time.time() - t0)
+        if rest > 0:
+            time.sleep(rest)
+
+
+def caption_corrected(c: Chrome, kicker: str, wrong: str, right: str, sub: str = ""):
+    """A caption that fixes its own spelling — used for the correction feature."""
+    caption(c, kicker, wrong, sub)
+    record(c, 1.3)
+    c.js("""(function(){
+      const t=document.querySelector('#demo-cap .t');
+      t.innerHTML=`<s style="opacity:.45;text-decoration-thickness:1px">%s</s>`;
+      setTimeout(()=>{ t.innerHTML=`<s style="opacity:.35;text-decoration-thickness:1px">%s</s>`
+        + ` <span style="color:#8FB0FF">%s</span>`; }, 380);
+    })()""" % (wrong, wrong, right))
+    record(c, 2.6)
+
+
+def caption_counted(c: Chrome, kicker: str, template: str, to: int, sub: str = ""):
+    """A caption whose number counts up — used where the graph grows."""
+    caption(c, kicker, template.replace("{n}", "0"), sub)
+    c.js("""(function(){
+      const t=document.querySelector('#demo-cap .t');
+      const target=%d, tpl=%r, started=performance.now(), ms=1100;
+      (function step(now){
+        const p=Math.min(1,(now-started)/ms), e=1-Math.pow(1-p,3);
+        t.textContent=tpl.replace('{n}', String(Math.round(target*e)));
+        if(p<1) requestAnimationFrame(step);
+      })(started);
+    })()""" % (to, template))
+    record(c, 2.8)
+
+
 def caption(c: Chrome, kicker: str, title: str, sub: str = ""):
     c.js("""(function(){
       if(!document.getElementById('demo-cap-style')){

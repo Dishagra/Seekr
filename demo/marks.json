@@ -1,0 +1,106 @@
+{
+ "fps": 20,
+ "frames": 2221,
+ "marks": [
+  {
+   "name": "title",
+   "kind": "card",
+   "start": 1
+  },
+  {
+   "name": "premise",
+   "kind": "card",
+   "start": 59
+  },
+  {
+   "name": "ask",
+   "kind": "zoom_search",
+   "start": 139
+  },
+  {
+   "name": "breadth_card",
+   "kind": "card",
+   "start": 306
+  },
+  {
+   "name": "breadth_climate",
+   "kind": "zoom_search",
+   "start": 374
+  },
+  {
+   "name": "breadth_bio",
+   "kind": "plain",
+   "start": 563
+  },
+  {
+   "name": "correction",
+   "kind": "zoom_search",
+   "start": 761
+  },
+  {
+   "name": "provenance_card",
+   "kind": "card",
+   "start": 929
+  },
+  {
+   "name": "provenance_person",
+   "kind": "plain",
+   "start": 1001
+  },
+  {
+   "name": "pipelines_card",
+   "kind": "card",
+   "start": 1159
+  },
+  {
+   "name": "pipelines",
+   "kind": "plain",
+   "start": 1231
+  },
+  {
+   "name": "review",
+   "kind": "plain",
+   "start": 1345
+  },
+  {
+   "name": "discovery_card",
+   "kind": "card",
+   "start": 1427
+  },
+  {
+   "name": "discovery",
+   "kind": "zoom_search",
+   "start": 1499
+  },
+  {
+   "name": "shortlist_card",
+   "kind": "card",
+   "start": 1720
+  },
+  {
+   "name": "shortlist_save",
+   "kind": "plain",
+   "start": 1788
+  },
+  {
+   "name": "shortlist_page",
+   "kind": "plain",
+   "start": 1876
+  },
+  {
+   "name": "api_card",
+   "kind": "card",
+   "start": 1954
+  },
+  {
+   "name": "api",
+   "kind": "plain",
+   "start": 2026
+  },
+  {
+   "name": "close",
+   "kind": "card",
+   "start": 2142
+  }
+ ]
+}

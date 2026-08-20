@@ -48,7 +48,7 @@ class Chrome:
                 time.sleep(0.5)
         if not ws_url:
             raise SystemExit("could not reach Chrome over CDP")
-        self.ws = websocket.create_connection(ws_url, timeout=30, suppress_origin=True)
+        self.ws = websocket.create_connection(ws_url, timeout=180, suppress_origin=True)
         self.n = 0
         self.send("Page.enable")
         self.send("Runtime.enable")

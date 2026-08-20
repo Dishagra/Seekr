@@ -304,6 +304,10 @@ def parse(session: Session, query: str) -> NLQuery:
 
     skills, orgs, locations = _vocab(session)
     df = _token_frequency(skills)
+    # Words the corpus uses to describe subjects. One stray record called
+    # "Open-Source Modelling" was enough to make "modelling" look like a
+    # surname, which turned a climate query into a name lookup.
+    vocab_words = set(df)
     vocab_size = max(1, len(skills))
     tokens = re.findall(r"[a-zA-Z0-9+#.'-]+", cleaned)
     consumed: set[int] = set()
@@ -469,7 +473,8 @@ def parse(session: Session, query: str) -> NLQuery:
             result.unmatched_terms.append(token)
             continue
         # not gated on capitalisation: people type "sricharan", not "Sricharan"
-        if _could_be_a_name(token) and _name_exists(session, token):
+        if (_could_be_a_name(token) and token not in vocab_words
+                and _name_exists(session, token)):
             result.name_terms.append(token)
         else:
             result.unmatched_terms.append(token)
@@ -1159,7 +1164,11 @@ NOT_A_PERSON = re.compile(
     r"|editor|editorial|anonymous|unknown|staff|admin"
     r"|community|collective|network|alliance|federation|council|forum|club"
     r"|hub|labs?|studios?|systems|tech|technologies|solutions|official|bot"
-    r"|software|digital|media|ventures|partners|holdings|pvt|private|limited)\b",
+    r"|software|digital|media|ventures|partners|holdings|pvt|private|limited"
+    r"|open.?source|modelling|modeling|simulation|toolkit|framework|benchmark"
+    r"|dataset|initiative|programme|program office|working group"
+    r"|compagnia|fondazione|stiftung|instituto|observatory|agency|ministry"
+    r"|academy|trust|charity|bureau|authority)\b",
     re.IGNORECASE,
 )
 
