@@ -206,3 +206,98 @@ def card(c: Chrome, title: str, sub: str = "", kicker: str = "", dark: bool = Tr
 def goto_ui(c: Chrome, hash_: str = "#/search", settle: float = 2.4):
     c.send("Page.navigate", url=UI + hash_)
     time.sleep(settle)
+
+
+CURSOR_CSS = """
+#demo-cursor{
+  position:fixed; left:0; top:0; z-index:100000; pointer-events:none;
+  width:22px; height:22px; margin:-2px 0 0 -2px;
+  filter:drop-shadow(0 2px 4px rgba(17,17,19,.35));
+  transition:transform .09s cubic-bezier(.22,.61,.36,1);
+}
+#demo-cursor.press{transform:scale(.86)}
+#demo-ring{
+  position:fixed; z-index:99999; pointer-events:none;
+  width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%;
+  border:2px solid #175fff; opacity:0; transform:scale(.4);
+}
+#demo-ring.go{ animation:demoring .5s cubic-bezier(.22,.61,.36,1) forwards; }
+@keyframes demoring{
+  0%{opacity:.8; transform:scale(.4)}
+  100%{opacity:0; transform:scale(3.2)}
+}
+"""
+
+CURSOR_SVG = ('<svg viewBox="0 0 24 24" width="22" height="22">'
+              '<path d="M5 2l14 8.4-6.1 1.3 3.2 6.6-2.6 1.3-3.2-6.6L5 17.6z" '
+              'fill="#111113" stroke="#fff" stroke-width="1.3"/></svg>')
+
+
+def show_cursor(c: Chrome, x: int = 760, y: int = 620):
+    """Headless Chrome draws no pointer, so the film carries its own."""
+    c.js("""(function(){
+      if(!document.getElementById('demo-cursor-style')){
+        const st=document.createElement('style');
+        st.id='demo-cursor-style'; st.textContent=%r; document.head.appendChild(st);
+      }
+      let cur=document.getElementById('demo-cursor');
+      if(!cur){
+        cur=document.createElement('div'); cur.id='demo-cursor';
+        cur.innerHTML=%r; document.body.appendChild(cur);
+        const ring=document.createElement('div'); ring.id='demo-ring';
+        document.body.appendChild(ring);
+      }
+      cur.style.left='%dpx'; cur.style.top='%dpx';
+    })()""" % (CURSOR_CSS, CURSOR_SVG, x, y))
+
+
+def move_cursor(c: Chrome, selector: str, seconds: float = 0.9):
+    """Glide the pointer to an element, recording every step of the way."""
+    box = c.js("""(function(){
+      const el=document.querySelector(%r);
+      if(!el) return null;
+      const r=el.getBoundingClientRect();
+      return [Math.round(r.left+r.width/2), Math.round(r.top+r.height/2)];
+    })()""" % selector)
+    if not box:
+        return None
+    start = c.js("""(function(){
+      const c=document.getElementById('demo-cursor');
+      return c ? [parseInt(c.style.left)||0, parseInt(c.style.top)||0] : [0,0];
+    })()""")
+    steps = max(2, int(seconds * FPS))
+    for i in range(1, steps + 1):
+        t = i / steps
+        e = t * t * (3 - 2 * t)                     # same easing as everything else
+        x = round(start[0] + (box[0] - start[0]) * e)
+        y = round(start[1] + (box[1] - start[1]) * e)
+        c.js(f"""(function(){{
+          const c=document.getElementById('demo-cursor');
+          if(c){{ c.style.left='{x}px'; c.style.top='{y}px'; }}
+        }})()""")
+        t0 = time.time()
+        c.shot(frame_path())
+        rest = (1 / FPS) - (time.time() - t0)
+        if rest > 0:
+            time.sleep(rest)
+    return box
+
+
+def click_cursor(c: Chrome, selector: str, hold: float = 0.5):
+    """Press: the pointer dips, a ring expands, then the element is clicked."""
+    c.js("""(function(){
+      const cur=document.getElementById('demo-cursor');
+      const ring=document.getElementById('demo-ring');
+      if(cur) cur.classList.add('press');
+      if(ring && cur){
+        ring.style.left=cur.style.left; ring.style.top=cur.style.top;
+        ring.classList.remove('go'); void ring.offsetWidth; ring.classList.add('go');
+      }
+    })()""")
+    record(c, 0.22)
+    c.js("(document.getElementById('demo-cursor')||{classList:{remove(){}}}).classList.remove('press')")
+    c.js("""(function(){
+      const el=document.querySelector(%r);
+      el && el.click();
+    })()""" % selector)
+    record(c, hold)

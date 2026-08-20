@@ -17,8 +17,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from capture import Chrome, UI, TOKEN, OUT                      # noqa: E402
 import scenes                                                    # noqa: E402
 from scenes import (MARKS, card, caption, caption_corrected,      # noqa: E402
-                    caption_counted, caption_off, caption_typed, click_live,
-                    goto_ui, mark, record, submit, type_query)
+                    caption_counted, caption_off, caption_typed, click_cursor,
+                    click_live, goto_ui, mark, move_cursor, record,
+                    show_cursor, submit, type_query)
 
 MARK = re.search(r'd="([^"]+)"',
                  (pathlib.Path(__file__).parents[1] / "frontend/assets/mark.svg").read_text()).group(1)
@@ -170,19 +171,43 @@ def _act_two(c: Chrome):
          kicker="Dossier", seconds=2.0, size=40, mark_svg=MARK_SVG)
     mark("dossier")
     # Back to the app first: a title card leaves the tab on a data: URL, where
-    # a relative /v1 fetch has no origin and localStorage is empty. Then fetch
-    # the dossier the way the app does — navigating straight to the endpoint
-    # sends no Authorization header and films a 401.
-    goto_ui(c, f"#/person/{person_id}", settle=1.6)
+    # a relative /v1 fetch has no origin and localStorage is empty.
+    goto_ui(c, f"#/person/{person_id}", settle=1.8)
+
+    # Show the pointer reach the button and press it, rather than cutting to a
+    # document that appears from nowhere. The click is real — the button
+    # enters its own busy state — and window.open is redirected so the report
+    # lands in this tab instead of one the recorder cannot see.
+    show_cursor(c, x=980, y=760)
+    record(c, 0.35)
+    c.js("""(function(){
+      window.__seekrOpen = window.open;
+      window.open = function(url){ window.__seekrPdf = url; return null; };
+    })()""")
+    sel = "button.btn:not([disabled])"
+    dossier_btn = c.js("""(function(){
+      const b=[...document.querySelectorAll('button')]
+        .find(x=>x.textContent.trim().startsWith('Dossier'));
+      if(!b) return null;
+      b.setAttribute('data-demo','dossier');
+      return true;
+    })()""")
+    if dossier_btn:
+        sel = "button[data-demo='dossier']"
+        move_cursor(c, sel, seconds=1.0)
+        click_cursor(c, sel, hold=1.4)
+    else:
+        record(c, 0.6)
+
+    # the report itself, rendered in place
     c.js("""(async function(){
-      const id = "%s";
-      const res = await fetch(`/v1/persons/${id}/dossier`, {
+      const res = await fetch(`/v1/persons/%s/dossier`, {
         headers: { Authorization: 'Bearer ' + localStorage.getItem('seekr_token') },
       });
       const html = await res.text();
       document.open(); document.write(html); document.close();
     })()""" % person_id)
-    time.sleep(2.6)
+    time.sleep(2.2)
     caption(c, "Dossier", "Evidence, scored — not the person",
             "A rubric over the record itself: corroboration, recency, identity "
             "strength, published output.")
