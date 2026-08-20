@@ -12,6 +12,9 @@ carries the score and the evidence components behind it.
 from datetime import datetime
 
 import contextvars
+import os
+import pathlib
+import re
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import String as SAString
@@ -1223,6 +1226,199 @@ def list_feedback(
             for r in rows
         ],
     }
+
+
+@app.get("/v1/persons/{person_id}/dossier")
+def person_dossier(person_id: str, db: Session = Depends(get_db)):
+    """A readable, evidence-linked report on one person, as HTML."""
+    from starlette.responses import HTMLResponse
+
+    from .dossier import collect, render_html
+
+    person = db.get(Person, person_id)
+    if person is None or person.merged_into:
+        raise HTTPException(404, "no such person")
+    return HTMLResponse(render_html(collect(db, person)))
+
+
+@app.get("/v1/persons/{person_id}/dossier.pdf")
+def person_dossier_pdf(person_id: str, db: Session = Depends(get_db)):
+    """The same dossier as a PDF.
+
+    Rendered by headless Chrome, which is how the screener produces its
+    reports too. Chrome is not in the container image, so this answers 501
+    where it is missing rather than failing obscurely — the HTML above always
+    works, and a browser can print it.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    from starlette.responses import Response
+
+    from .dossier import collect, render_html
+
+    person = db.get(Person, person_id)
+    if person is None or person.merged_into:
+        raise HTTPException(404, "no such person")
+
+    chrome = os.environ.get("CHROME_BINARY") or next(
+        (c for c in (
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser",
+        ) if shutil.which(c) or pathlib.Path(c).exists()), None)
+    if not chrome:
+        raise HTTPException(501, "no Chrome available to render a PDF; use the "
+                                 "HTML dossier at /dossier and print it")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = pathlib.Path(tmp) / "dossier.html"
+        out = pathlib.Path(tmp) / "dossier.pdf"
+        src.write_text(render_html(collect(db, person)), encoding="utf-8")
+        # Chrome writes the PDF and then takes tens of seconds to shut down,
+        # so waiting for the process to exit turns a two-second render into a
+        # minute-long request. Wait for the file to appear and settle instead,
+        # then stop it.
+        import time as _time
+
+        proc = subprocess.Popen(
+            [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+             f"--user-data-dir={tmp}/profile", "--no-pdf-header-footer",
+             "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+             "--disable-background-networking", "--disable-component-update",
+             "--disable-sync", "--disable-default-apps", "--disable-dev-shm-usage",
+             "--virtual-time-budget=3000",
+             f"--print-to-pdf={out}", src.as_uri()],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            size, stable, deadline = -1, 0, _time.time() + 45
+            while _time.time() < deadline:
+                if out.exists():
+                    now = out.stat().st_size
+                    # two identical readings means the write has finished
+                    stable = stable + 1 if now == size and now > 0 else 0
+                    size = now
+                    if stable >= 2:
+                        break
+                if proc.poll() is not None and out.exists():
+                    break
+                _time.sleep(0.25)
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        if not out.exists():
+            raise HTTPException(500, "Chrome produced no PDF")
+        name = re.sub(r"[^A-Za-z0-9]+", "_", person.canonical_name or "person").strip("_")
+        return Response(
+            out.read_bytes(), media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{name}_seekr_dossier.pdf"'},
+        )
+
+
+@app.get("/v1/query/stream")
+def query_stream(
+    q: str = Query(..., description="the question, in plain language"),
+    limit: int = Query(50, le=200),
+    db: Session = Depends(get_db),
+):
+    """The same search as /v1/query, reported as it happens.
+
+    A live search asks several sources in turn and can take tens of seconds.
+    Returning only the finished answer makes that look like a hang; this emits
+    an event per source as it is reached, so a caller can show what is being
+    asked and what came back, then the finished result set.
+
+    Server-sent events. Each line is `data: {json}`.
+    """
+    import json as _json
+    import queue as _queue
+    import threading
+
+    from starlette.responses import StreamingResponse
+
+    from .nlq import (SUGGESTION_SEARCHERS, discovery_suggestions, execute,
+                      parse, relevance_scores)
+
+    events: "_queue.Queue[dict | None]" = _queue.Queue()
+
+    def run():
+        session = SessionLocal()
+        try:
+            parsed = parse(session, q)
+            if limit:
+                parsed.limit = limit
+            events.put({"type": "parsed", "applied_filters": {
+                "skills": parsed.skills, "organizations": parsed.organizations,
+                "locations": parsed.locations, "countries": parsed.countries,
+                "roles": parsed.roles, "name_terms": parsed.name_terms,
+            }, "unmatched_terms": parsed.unmatched_terms,
+                "corrections": parsed.corrections})
+
+            def on_source(name, state, **facts):
+                events.put({"type": "source", "source": name, "state": state, **facts})
+
+            suggestions = discovery_suggestions(
+                session, parsed, allow_paid=True, on_source=on_source
+            )
+            stored = sum(1 for s_ in suggestions if s_.get("stored"))
+            if stored:
+                from .nlq import invalidate_vocab
+                invalidate_vocab()
+                parsed = parse(session, q)
+                if limit:
+                    parsed.limit = limit
+            persons = execute(session, parsed)
+            # the same ranking /v1/query applies, so the stream and the plain
+            # endpoint cannot disagree about the order
+            scores = relevance_scores(session, parsed, [p.id for p in persons])
+            rows = []
+            for person in persons:
+                row = _person_summary(person)
+                # _person_summary does not carry the score — /v1/query attaches
+                # it in its own builder — so the stream attaches it here rather
+                # than reporting a different order to the same question
+                rel = scores.get(person.id)
+                if rel:
+                    row["score"] = rel.get("score")
+                    row["score_components"] = rel.get("components")
+                    row["matched_evidence"] = rel.get("matched_evidence")
+                rows.append(row)
+            rows.sort(key=lambda r: (r.get("score") is None, -(r.get("score") or 0)))
+            events.put({
+                "type": "results",
+                "count": len(rows),
+                "stored_from_live": stored,
+                "results": rows,
+            })
+        except Exception as exc:                     # the stream must always end
+            events.put({"type": "error", "detail": f"{type(exc).__name__}: {exc}"})
+        finally:
+            session.close()
+            events.put(None)
+
+    threading.Thread(target=run, daemon=True).start()
+
+    def emit():
+        # the cards exist before any of them resolve, so the UI can lay them
+        # out at once rather than popping them in one at a time
+        yield "data: " + _json.dumps({
+            "type": "plan",
+            "sources": [name for name, _fn, _full in SUGGESTION_SEARCHERS],
+        }) + "\n\n"
+        while True:
+            item = events.get()
+            if item is None:
+                break
+            yield "data: " + _json.dumps(item, default=str) + "\n\n"
+
+    return StreamingResponse(emit(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+    })
 
 
 @app.post("/v1/webhooks")

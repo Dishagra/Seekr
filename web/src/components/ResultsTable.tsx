@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { apiSend, errorMessage, isUnauthorized } from "../api/client";
+import { apiBlob, apiSend, errorMessage, isUnauthorized } from "../api/client";
 import { BrandLinks } from "../lib/brands";
 import { Icon } from "../lib/icons";
 import type { PersonSummary, Shortlist } from "../types";
@@ -86,6 +86,24 @@ function MatchCell({ person, query }: { person: PersonSummary; query: string }) 
         onClick={save}
       >
         <Icon.bookmark />
+      </button>
+      {/* The report a human reads before an interview: everything Seekr holds
+          about this person, with the source of each line. Fetched rather than
+          linked, so the bearer token stays out of the URL. */}
+      <button
+        className="vbtn"
+        title="Open the dossier as a PDF"
+        disabled={busy}
+        onClick={async (e) => {
+          e.stopPropagation();
+          const blob = await apiBlob(`/v1/persons/${person.id}/dossier.pdf`);
+          const url = URL.createObjectURL(blob);
+          window.open(url, "_blank", "noopener");
+          // the tab holds its own reference; release ours once it has loaded
+          setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        }}
+      >
+        <Icon.doc />
       </button>
     </td>
   );

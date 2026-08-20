@@ -1643,7 +1643,7 @@ def persist_suggestions(session: Session, suggestions: list[dict]) -> int:
 
 def discovery_suggestions(
     session: Session | None = None, parsed: NLQuery = None, limit: int = 10,
-    allow_paid: bool = True,
+    allow_paid: bool = True, on_source=None,
 ) -> list[dict]:
     """Live author search across sources for terms the local corpus lacks.
 
@@ -1651,7 +1651,19 @@ def discovery_suggestions(
     order and later ones are skipped once enough candidates are found, so the
     common case still costs a single upstream call. A failing source is
     skipped rather than failing the query.
+
+    `on_source(name, state, **facts)` is called as each source is reached, so
+    a caller can show progress while the work happens rather than only once
+    all of it is finished. States: searching, done, cached, skipped, failed.
     """
+    def report(name: str, state: str, **facts) -> None:
+        if on_source is None:
+            return
+        try:
+            on_source(name, state, **facts)
+        except Exception:      # a progress listener must never break a search
+            logger.debug("progress listener failed for %s", name, exc_info=True)
+
     terms = parsed.unmatched_terms + parsed.name_terms
     if not terms:
         terms = parsed.skills[:1]
@@ -1667,8 +1679,10 @@ def discovery_suggestions(
     replayed: list[str] = []
     for source, searcher, uses_full_query in SUGGESTION_SEARCHERS:
         if len(out) >= MIN_USEFUL_SUGGESTIONS and not _always_run(source):
-            break
+            report(source, "skipped", reason="enough found already")
+            continue
         if not allow_paid and source in PAID_SOURCES:
+            report(source, "skipped", reason="metered source, not enabled for this search")
             continue
         # Already bought this answer recently? The people are in the graph, so
         # do not pay for it again. Keyed on the USER'S query, not the derived
@@ -1681,18 +1695,23 @@ def discovery_suggestions(
             cached.hits = (cached.hits or 0) + 1
             replayed.extend(cached.person_ids or [])
             session.commit()
+            report(source, "cached", found=cached.result_count or 0,
+                   people=len(cached.person_ids or []))
             continue
         # A question made entirely of role words ("product designers who have
         # worked on developer tools") leaves no residue at all. Fall back to
         # what the user actually typed rather than searching for nothing.
         search_for = (cache_key if uses_full_query else query) or cache_key
+        report(source, "searching", query=search_for)
         try:
             found = (
                 searcher(search_for, limit, parsed)
                 if _wants_parsed(searcher) else searcher(search_for, limit)
             )
-        except Exception:
-            continue  # a throttled or unavailable source is not a query failure
+        except Exception as exc:
+            # a throttled or unavailable source is not a query failure
+            report(source, "failed", reason=f"{type(exc).__name__}")
+            continue
         keep = []
         for item in found:
             if not item.get("external_id"):
@@ -1710,6 +1729,7 @@ def discovery_suggestions(
         else:
             stored = persist_suggestions(session, keep) if session is not None else 0
         total_stored += stored
+        report(source, "done", found=len(keep), stored=stored)
         # A free source that found nothing is not worth remembering: nothing
         # was bought, and caching the miss would block the retry that a better
         # parse or a wider corpus would have answered. Paid providers still

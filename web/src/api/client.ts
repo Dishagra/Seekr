@@ -120,3 +120,15 @@ export function isUnauthorized(e: unknown): boolean {
 export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+
+/** Fetch a binary response (a PDF) with the bearer token in the header. */
+export async function apiBlob(path: string): Promise<Blob> {
+  const res = await fetch(path, { headers: { Authorization: `Bearer ${getToken()}` } });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error("unauthorized");
+  }
+  if (!res.ok) throw new Error(`request failed (${res.status})`);
+  return res.blob();
+}

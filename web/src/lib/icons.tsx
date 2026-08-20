@@ -12,6 +12,13 @@ const stroke = {
 } as const;
 
 export const Icon = {
+  doc: () => (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5M9 13h6M9 17h4" />
+    </svg>
+  ),
   logo: (): ReactElement => <Mark size={15} />,
 
   search: () => (

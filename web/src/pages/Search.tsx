@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SourceCards, useLiveSearch } from "../components/SourceCards";
 import { api, apiSend, errorMessage, isUnauthorized } from "../api/client";
 import {
   EMPTY_FILTERS,
@@ -68,6 +69,8 @@ export function Search() {
     setRecent(list);
   };
 
+  const live = useLiveSearch();
+
   const runQuery = useCallback(async (discover?: boolean, from?: number) => {
     const q = textRef.current.trim();
     if (!q) return;
@@ -83,6 +86,29 @@ export function Search() {
       setRows([]);
       setOffset(0);
       setLoading(discover ? "Querying live sources…" : "Searching…");
+    }
+    if (discover && !paging) {
+      // stream it, so each source reports for itself while the work happens
+      live.start(q, 50, (msg: any) => {
+        if (msg.type === "error") { setLoading(null); setError(msg.detail); return; }
+        if (msg.type === "parsed") {
+          // show what this query matched, not what the last one did
+          setData((prev) => ({
+            ...(prev as any),
+            applied_filters: msg.applied_filters,
+            unmatched_terms: msg.unmatched_terms,
+            corrections: msg.corrections,
+            results: [],
+          }) as QueryResponse);
+          setRows([]);
+          return;
+        }
+        setLoading(null);
+        setData((prev) => ({ ...(prev as any), ...msg }) as QueryResponse);
+        setRows(msg.results || []);
+        setOffset((msg.results || []).length);
+      });
+      return;
     }
     try {
       const params = new URLSearchParams({ q });
@@ -270,8 +296,11 @@ export function Search() {
         onClear={clearFilters}
       />
 
-      {loading ? (
-        <Loading message={loading} />
+      {/* what each source is doing, while it does it */}
+      <SourceCards order={live.order} sources={live.sources} />
+
+      {loading || live.running ? (
+        <Loading message={loading || "Querying live sources…"} />
       ) : error ? (
         <Banner>{error}</Banner>
       ) : data ? (
