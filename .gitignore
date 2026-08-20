@@ -29,3 +29,6 @@ dist/
 .vercel
 .DS_Store
 seekr.log
+demo/frames/
+demo/check/
+demo/film.log
