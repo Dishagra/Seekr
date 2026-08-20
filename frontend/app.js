@@ -388,13 +388,13 @@ function clearFilters(){
    second, smaller copy appearing next to it while the first sits there
    inert. The fill layer is invisible until work is in flight. */
 function markBackdrop(){
+  // Two stacked copies of the mark. The upper one is revealed from the
+  // bottom with a CSS inset clip — animating an SVG <clipPath> rect is not
+  // reliably supported, and silently did nothing.
   return `
   <svg width="465" height="465" viewBox="0 0 512 512" aria-hidden="true">
-    <defs><clipPath id="bdfill"><rect class="bdrect" x="0" y="0" width="512" height="512"/></clipPath></defs>
-    <path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd"/>
-    <g class="bdfill" clip-path="url(#bdfill)">
-      <path d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd"/>
-    </g>
+    <path class="bdbase" d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd"/>
+    <path class="bdfill" d="${MARK_PATH}" fill="currentColor" fill-rule="evenodd"/>
   </svg>`;
 }
 

@@ -308,16 +308,26 @@ td.num{font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
    "drawn" with a dash offset the way a stroked path can, so the mark fills
    from the bottom instead — the shape stays exactly the official one and the
    fill does the moving. */
-.bdfill{opacity:0; transition:opacity var(--settle) var(--ease)}
-.bdrect{transform-origin:50% 100%; transform:scaleY(0)}
-body.is-working .backdrop{opacity:.11}
+.backdrop svg{overflow:visible}
+.bdbase{transition:opacity var(--settle) var(--ease)}
+/* the second copy sits exactly on the first and is revealed from below */
+.bdfill{
+  opacity:0; clip-path:inset(100% 0 0 0);
+  transition:opacity var(--settle) var(--ease);
+}
+/* While working the whole mark is brought up, the outline is dimmed, and the
+   clipped copy rises through it. Both layers are the same colour, so without
+   dimming the base there is nothing to see the fill against — which is
+   exactly why the animation looked like it had gone. */
+body.is-working .backdrop{opacity:.16}
+body.is-working .bdbase{opacity:.28}
 body.is-working .bdfill{opacity:1}
-body.is-working .bdrect{animation:markfill 1.7s var(--ease) infinite}
+body.is-working .bdfill{animation:markfill 1.8s var(--ease) infinite}
 @keyframes markfill{
-  0%{transform:scaleY(0)}
-  55%{transform:scaleY(1)}
-  78%{transform:scaleY(1)}
-  100%{transform:scaleY(0)}
+  0%{clip-path:inset(100% 0 0 0)}
+  55%{clip-path:inset(0 0 0 0)}
+  78%{clip-path:inset(0 0 0 0)}
+  100%{clip-path:inset(0 0 100% 0)}
 }
 
 .spinner{
