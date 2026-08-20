@@ -170,9 +170,20 @@ From a fresh clone, this installs everything, builds the interface, creates a
 database, and fills it with people:
 
 ```bash
-./setup.sh              # 50,000 people, about 20 minutes
-./setup.sh 10000        # smaller and quicker, about 4 minutes
+./setup.sh              # 50,000 people + 150 in full, about 35 minutes
+./setup.sh 10000 50     # smaller and quicker, about 10 minutes
 ```
+
+It builds the graph in **two passes**, and both matter:
+
+| Pass | What it brings | Speed |
+|---|---|---|
+| **Breadth** | everyone: names, affiliations, research topics | thousands per minute |
+| **Depth** | publications, venues, citation counts | about 6 seconds per person |
+
+Skip the depth pass and searches still work, but dossiers have nothing to say
+about published output — the "Published output" row scores zero. Our own graph
+is the same shape: 50,885 people, of whom about 3% have publications attached.
 
 Then:
 
