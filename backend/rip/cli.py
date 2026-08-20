@@ -460,6 +460,48 @@ def cmd_merge_orgs(args) -> None:
     print(f"merged {merged} duplicate organization records")
 
 
+def cmd_audit_protected(args) -> None:
+    """Report protected-attribute material already sitting in the graph.
+
+    Screening runs at ingest, so this is for everything collected before it
+    did — and for checking that the patterns are not flagging topics.
+    """
+    from sqlalchemy import select
+
+    from .compliance import redact, scan
+    from .db import SessionLocal
+    from .ingest import FREE_TEXT_ATTRS
+    from .models import Evidence
+
+    session = SessionLocal()
+    rows = session.execute(
+        select(Evidence).where(Evidence.attribute_type.in_(tuple(FREE_TEXT_ATTRS)))
+    ).scalars().all()
+
+    hits = [(e, scan(e.value)) for e in rows]
+    hits = [(e, f) for e, f in hits if f]
+    print(f"{len(rows):,} free-text evidence values scanned, {len(hits)} carrying "
+          "protected attributes")
+    by_kind: dict[str, int] = {}
+    for _e, findings in hits:
+        for f in findings:
+            by_kind[f["kind"]] = by_kind.get(f["kind"], 0) + 1
+    for kind, n in sorted(by_kind.items(), key=lambda kv: -kv[1]):
+        print(f"   {kind:22} {n}")
+    for e, findings in hits[:10]:
+        print(f"\n   person {e.person_id}  ({e.attribute_type}, {e.source})")
+        print(f"     now:  {str(e.value)[:110]}")
+        print(f"     ->    {str(redact(e.value)[0])[:110]}")
+    if hits and not getattr(args, "yes", False):
+        print(f"\nre-run with --yes to redact these {len(hits)} values in place")
+        return
+    for e, _f in hits:
+        e.value = redact(e.value)[0]
+    if hits:
+        session.commit()
+        print(f"\nredacted {len(hits)} values")
+
+
 def cmd_check_db(args) -> None:
     """Print engine, journal mode, credentials and queue depths."""
     import os
@@ -680,6 +722,10 @@ def main() -> None:
 
     sub.add_parser("check-db", help="engine, journal mode, queue depths, credentials")
 
+    p_prot = sub.add_parser("audit-protected",
+                            help="find protected-attribute material in stored free text")
+    p_prot.add_argument("--yes", action="store_true", help="redact in place; otherwise dry-run")
+
     p_orgs = sub.add_parser("merge-orgs",
                             help="fold organizations that are one company spelled two ways")
     p_orgs.add_argument("--yes", action="store_true", help="actually merge; otherwise dry-run")
@@ -738,6 +784,8 @@ def main() -> None:
         cmd_check_db(args)
     elif args.command == "purge-nonpersons":
         cmd_purge_nonpersons(args)
+    elif args.command == "audit-protected":
+        cmd_audit_protected(args)
     elif args.command == "merge-orgs":
         cmd_merge_orgs(args)
     elif args.command == "worker":

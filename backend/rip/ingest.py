@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+import logging
+
+from .compliance import redact
 from .models import (
     Affiliation,
     AttributeConflict,
@@ -157,6 +160,14 @@ def _record_attribute_conflict(
     )
 
 
+# Attributes a source writes as prose, where a protected attribute can turn up
+# incidentally. Structured fields (skill, scholarly_metrics) are not screened:
+# they are enumerations, not sentences.
+logger = logging.getLogger("rip.ingest")
+
+FREE_TEXT_ATTRS = frozenset({"bio", "summary", "role", "award", "location", "headline"})
+
+
 def _add_evidence(
     session: Session,
     person: Person,
@@ -169,6 +180,17 @@ def _add_evidence(
     published_at: datetime | None = None,
     confidence: float = 0.5,
 ) -> None:
+    # Free text arrives as whatever a source chose to write. Protected
+    # attributes are redacted before the value becomes queryable evidence —
+    # the raw payload still holds the original, so provenance is intact and
+    # nothing is quietly rewritten out of existence.
+    if attribute_type in FREE_TEXT_ATTRS:
+        value, removed = redact(value)
+        if removed:
+            logger.info(
+                "redacted %s from %s evidence for %s",
+                ", ".join(removed), attribute_type, person.id,
+            )
     existing = session.execute(
         select(Evidence).where(
             Evidence.person_id == person.id,

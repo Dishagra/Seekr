@@ -991,3 +991,36 @@ def test_citations_count_like_stars_so_researchers_are_not_buried(session):
     rows = execute(session, parse(session, "robotics"))
     out = {p.canonical_name: p.relevance["components"]["output"] for p in rows}
     assert out["Paper Person"] == out["Repo Person"]
+
+
+def test_protected_attributes_are_redacted_before_they_become_evidence(session, caplog):
+    """A bio that mentions family or pronouns must not make them searchable."""
+    import logging
+
+    from rip.ingest import ingest_profile
+    from rip.models import Evidence
+    from rip.normalize import EvidenceItem, NormalizedProfile
+
+    def bio(text):
+        return NormalizedProfile(
+            source="github", source_type="code", external_id="p" + str(abs(hash(text)) % 999),
+            url="https://github.com/x", raw={}, name="Sam Example",
+            evidence=[EvidenceItem(attribute_type="bio", value=text,
+                                   url="https://example.test", confidence=0.9)],
+        )
+
+    with caplog.at_level(logging.INFO, logger="rip.ingest"):
+        ingest_profile(session, bio("Distributed systems engineer. Father of two. pronouns: he/him"))
+
+    stored = [e.value for e in session.query(Evidence).filter_by(attribute_type="bio").all()]
+    joined = " ".join(stored).lower()
+    assert "father of two" not in joined
+    assert "he/him" not in joined
+    assert "distributed systems engineer" in joined      # the substance survives
+    assert "[redacted: family_status]" in joined
+    assert "redacted" in caplog.text                      # and it is logged, not silent
+
+    # a topic that merely uses the vocabulary is untouched
+    ingest_profile(session, bio("Researching how technology is affecting children and society"))
+    kept = [e.value for e in session.query(Evidence).filter_by(attribute_type="bio").all()]
+    assert any("affecting children and society" in v for v in kept)

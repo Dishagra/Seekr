@@ -396,6 +396,20 @@ time under your control.
 
 ## Compliance & responsible collection
 
+**Protected attributes are redacted at ingest.** Free-text fields — bios,
+headlines, roles, awards, locations — are screened before they become
+queryable evidence, and material about someone's family, faith, health, age,
+citizenship or gender identity is replaced with a named marker rather than
+stored. The raw payload keeps the original, so provenance is intact and
+nothing is silently rewritten; what changes is only what can be searched on.
+
+The screening insists the mention be *about the person*. A researcher whose
+stated interest is "how technology is affecting children and society" is
+writing about a topic, not disclosing a family, and a colleague named
+Christian is not disclosing a religion. `rip.cli audit-protected` scans what
+is already stored and redacts in place with `--yes`.
+
+
 - Official public APIs only; no scraping behind auth, CAPTCHAs, paywalls, or
   anti-bot measures — the base connector has no mechanisms for any of that.
 - Rate limits honored (per-connector intervals + `Retry-After`).
