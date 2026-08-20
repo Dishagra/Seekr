@@ -29,6 +29,11 @@ __pycache__/
 .pytest_cache/
 web/dist/
 
+# The demo film and its frames — hundreds of megabytes of intermediates that
+# have nothing to do with running the service, and would be sent to the daemon
+# on every build.
+demo/
+
 # Not needed at runtime
 .git/
 .github/

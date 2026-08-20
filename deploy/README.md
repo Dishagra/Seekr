@@ -134,3 +134,41 @@ Search has not been tested beyond ~60 people. Text matching uses
 `LIKE '%term%'`, which cannot use a B-tree index — a growing corpus will need
 trigram indexes or full-text search. Not a deployment blocker, but it is the
 next real engineering problem and worth knowing before load arrives.
+
+
+## What has been verified, and what has not
+
+Docker was not installed on the machine this was prepared on, so the image
+has never actually been built. Everything the build depends on was checked
+another way, and the runtime stage was reproduced step by step outside a
+container:
+
+- the web stage builds from a clean copy of `web/` alone, and lands its
+  output at `/frontend` — exactly where the runtime stage copies it from
+- `pip install -e ".[postgres]"` succeeds on Python 3.12 with only
+  `pyproject.toml` and `backend/` present, which is all the runtime stage
+  copies
+- with the package installed that way, `rip.api` resolves the UI to
+  `<app>/frontend`, which is the path the image puts it at
+- the exact HEALTHCHECK command returns 0 against a running process
+- `/ui`, `/docs` and `/static` all answer 200, `/v1` answers 401 without a
+  token and 200 with one, and the schema creates itself — 23 tables — on a
+  blank volume
+- every command the nightly CronJob runs exists in the CLI
+- `.dockerignore` excludes secrets, databases and the demo, and excludes
+  nothing the Dockerfile copies
+- `read_only: true` is safe: nothing outside the database is written by the
+  served code
+- the Postgres URL form in the compose file is handled by `db.py`, which
+  applies pool settings only to server-backed engines
+
+What remains genuinely unproven is the container itself: layer caching, the
+`COPY --from=web` across stages, the non-root UID against a bind-mounted
+volume, and the image size. Run this first, on a machine with Docker:
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build
+```
+
+If `http://localhost:8000/ui` loads and asks for a token, the image and the
+database configuration are both correct.
